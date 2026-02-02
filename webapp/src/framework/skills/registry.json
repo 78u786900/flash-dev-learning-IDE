@@ -1,0 +1,349 @@
+{
+  "version": "1.0.0",
+  "updatedAt": 1738368000000,
+  "skills": [
+    {
+      "name": "detect-filetype-and-indexing",
+      "macro": "READ_FILES",
+      "description": "Detect file type, extract structure (pages/slides/sheets), build searchable index",
+      "triggers": ["index", "analyze file", "what type", "structure", "detect"],
+      "inputContract": {
+        "requiresSelection": false,
+        "acceptedFileTypes": ["pdf", "docx", "xlsx", "pptx", "image", "audio", "video", "code"]
+      },
+      "outputContract": {
+        "mustInclude": ["file_id", "type", "structure"],
+        "format": "json"
+      },
+      "estimatedTokens": 1000,
+      "priority": 10,
+      "version": "1.0.0",
+      "enabled": true
+    },
+    {
+      "name": "semantic-search-in-files",
+      "macro": "READ_FILES",
+      "description": "Search across files using keywords + semantic ranking, returns citations with location and confidence",
+      "triggers": ["find", "search", "where", "locate", "look for", "definition", "mentioned"],
+      "inputContract": {
+        "requiresSelection": false,
+        "acceptedFileTypes": ["pdf", "docx", "txt", "md", "code"]
+      },
+      "outputContract": {
+        "mustInclude": ["file_id", "location", "quote", "confidence"],
+        "format": "json"
+      },
+      "estimatedTokens": 2000,
+      "priority": 9,
+      "version": "1.0.0",
+      "enabled": true
+    },
+    {
+      "name": "region-ocr",
+      "macro": "READ_FILES",
+      "description": "Extract text from selected image region using OCR, with post-correction for math symbols",
+      "triggers": ["ocr", "extract text", "read image", "text from", "recognize"],
+      "inputContract": {
+        "requiresSelection": true,
+        "acceptedFileTypes": ["image", "pdf"],
+        "requiredFields": ["bbox"]
+      },
+      "outputContract": {
+        "mustInclude": ["text", "confidence"],
+        "format": "text"
+      },
+      "estimatedTokens": 1500,
+      "priority": 8,
+      "version": "1.0.0",
+      "enabled": true
+    },
+    {
+      "name": "table-extraction",
+      "macro": "READ_FILES",
+      "description": "Extract tables from PDF/image to structured data (CSV/JSON)",
+      "triggers": ["extract table", "table to", "parse table", "get data", "spreadsheet"],
+      "inputContract": {
+        "requiresSelection": false,
+        "acceptedFileTypes": ["pdf", "image"]
+      },
+      "outputContract": {
+        "mustInclude": ["table", "csv"],
+        "format": "json"
+      },
+      "estimatedTokens": 2000,
+      "priority": 7,
+      "version": "1.0.0",
+      "enabled": true
+    },
+    {
+      "name": "audio-transcribe-and-index",
+      "macro": "READ_FILES",
+      "description": "Transcribe audio to text with timestamps, build searchable index",
+      "triggers": ["transcribe", "audio to text", "what said", "lecture audio", "speech to text"],
+      "inputContract": {
+        "requiresSelection": false,
+        "acceptedFileTypes": ["audio", "video"]
+      },
+      "outputContract": {
+        "mustInclude": ["transcript", "timestamps"],
+        "format": "json"
+      },
+      "estimatedTokens": 3000,
+      "priority": 6,
+      "version": "1.0.0",
+      "enabled": true
+    },
+    {
+      "name": "video-summarize-and-chaptering",
+      "macro": "READ_FILES",
+      "description": "Segment video into chapters with summaries and timestamps",
+      "triggers": ["chapters", "video summary", "segment video", "key points", "timeline"],
+      "inputContract": {
+        "requiresSelection": false,
+        "acceptedFileTypes": ["video"]
+      },
+      "outputContract": {
+        "mustInclude": ["chapters", "timestamps", "summaries"],
+        "format": "json"
+      },
+      "estimatedTokens": 4000,
+      "priority": 5,
+      "version": "1.0.0",
+      "enabled": true
+    },
+    {
+      "name": "codebase-reading-and-map",
+      "macro": "READ_FILES",
+      "description": "Build code map: scan file tree, parse dependencies, summarize functions/classes",
+      "triggers": ["code map", "understand code", "codebase", "dependencies", "functions"],
+      "inputContract": {
+        "requiresSelection": false,
+        "acceptedFileTypes": ["code"]
+      },
+      "outputContract": {
+        "mustInclude": ["file_tree", "dependencies", "entry_points"],
+        "format": "json"
+      },
+      "estimatedTokens": 3500,
+      "priority": 6,
+      "version": "1.0.0",
+      "enabled": true
+    },
+    {
+      "name": "file-versioning-and-diff",
+      "macro": "EDIT_FILES",
+      "description": "Create file version, generate diff preview, enable rollback",
+      "triggers": ["save version", "diff", "changes", "compare", "rollback", "undo"],
+      "inputContract": {
+        "requiresSelection": false,
+        "acceptedFileTypes": ["pdf", "docx", "xlsx", "pptx", "txt", "md", "code"]
+      },
+      "outputContract": {
+        "mustInclude": ["version_id", "diff"],
+        "format": "version"
+      },
+      "estimatedTokens": 1500,
+      "priority": 10,
+      "version": "1.0.0",
+      "enabled": true
+    },
+    {
+      "name": "pdf-annotate-and-fill",
+      "macro": "EDIT_FILES",
+      "description": "Add highlights, comments, fill form fields in PDF (prefer overlays for non-destructive edits)",
+      "triggers": ["annotate", "highlight", "comment", "fill form", "mark"],
+      "inputContract": {
+        "requiresSelection": false,
+        "acceptedFileTypes": ["pdf"]
+      },
+      "outputContract": {
+        "mustInclude": ["annotations", "overlays"],
+        "format": "mixed"
+      },
+      "estimatedTokens": 2000,
+      "priority": 8,
+      "version": "1.0.0",
+      "enabled": true
+    },
+    {
+      "name": "docx-restructure-and-rewrite",
+      "macro": "EDIT_FILES",
+      "description": "Rewrite document with tone/length control, reorder sections, add citations",
+      "triggers": ["rewrite", "restructure", "simplify", "expand", "rephrase", "tone"],
+      "inputContract": {
+        "requiresSelection": false,
+        "acceptedFileTypes": ["docx", "txt", "md"]
+      },
+      "outputContract": {
+        "mustInclude": ["diff", "version_id"],
+        "format": "version"
+      },
+      "estimatedTokens": 3000,
+      "priority": 7,
+      "version": "1.0.0",
+      "enabled": true
+    },
+    {
+      "name": "xlsx-clean-calc-and-visualize",
+      "macro": "EDIT_FILES",
+      "description": "Clean data, compute derived columns, generate charts via overlay",
+      "triggers": ["clean data", "calculate", "chart", "visualize", "formula"],
+      "inputContract": {
+        "requiresSelection": false,
+        "acceptedFileTypes": ["xlsx"]
+      },
+      "outputContract": {
+        "mustInclude": ["updated_sheet", "charts"],
+        "format": "mixed"
+      },
+      "estimatedTokens": 2500,
+      "priority": 6,
+      "version": "1.0.0",
+      "enabled": true
+    },
+    {
+      "name": "pptx-generate-and-edit",
+      "macro": "EDIT_FILES",
+      "description": "Create/modify slides from notes or outlines, generate speaker notes",
+      "triggers": ["slides", "presentation", "pptx", "speaker notes"],
+      "inputContract": {
+        "requiresSelection": false,
+        "acceptedFileTypes": ["pptx"],
+        "acceptedNoteTypes": ["full-note"]
+      },
+      "outputContract": {
+        "mustInclude": ["version_id", "slides"],
+        "format": "version"
+      },
+      "estimatedTokens": 3500,
+      "priority": 5,
+      "version": "1.0.0",
+      "enabled": true
+    },
+    {
+      "name": "image-annotate-and-callouts",
+      "macro": "EDIT_FILES",
+      "description": "Add bounding boxes, arrows, labels as overlays on images",
+      "triggers": ["annotate image", "label", "arrow", "callout", "mark area"],
+      "inputContract": {
+        "requiresSelection": false,
+        "acceptedFileTypes": ["image"]
+      },
+      "outputContract": {
+        "mustInclude": ["overlays"],
+        "format": "overlay"
+      },
+      "estimatedTokens": 1500,
+      "priority": 7,
+      "version": "1.0.0",
+      "enabled": true
+    },
+    {
+      "name": "code-transform-and-diagram",
+      "macro": "EDIT_FILES",
+      "description": "Refactor code, extract snippets, generate flowchart/diagram as overlay",
+      "triggers": ["refactor", "flowchart", "diagram", "visualize code", "extract"],
+      "inputContract": {
+        "requiresSelection": false,
+        "acceptedFileTypes": ["code"]
+      },
+      "outputContract": {
+        "mustInclude": ["diff", "diagram"],
+        "format": "mixed"
+      },
+      "estimatedTokens": 3000,
+      "priority": 8,
+      "version": "1.0.0",
+      "enabled": true
+    },
+    {
+      "name": "latex-render-and-verify",
+      "macro": "EDIT_NOTES",
+      "description": "Render LaTeX, verify symbols/structure, highlight errors",
+      "triggers": ["latex", "math", "formula", "equation", "render"],
+      "inputContract": {
+        "requiresSelection": false,
+        "acceptedNoteTypes": ["section", "full-note"]
+      },
+      "outputContract": {
+        "mustInclude": ["rendered", "errors"],
+        "format": "overlay"
+      },
+      "estimatedTokens": 1500,
+      "priority": 9,
+      "version": "1.0.0",
+      "enabled": true
+    },
+    {
+      "name": "note-linking-relative-paths",
+      "macro": "EDIT_NOTES",
+      "description": "Create bidirectional links between notes using relative paths, update link graph",
+      "triggers": ["link", "connect", "reference", "backlink", "relate"],
+      "inputContract": {
+        "requiresSelection": false,
+        "acceptedNoteTypes": ["section", "full-note"]
+      },
+      "outputContract": {
+        "mustInclude": ["links", "graph"],
+        "format": "json"
+      },
+      "estimatedTokens": 1000,
+      "priority": 7,
+      "version": "1.0.0",
+      "enabled": true
+    },
+    {
+      "name": "canvas-overlay-authoring",
+      "macro": "EDIT_NOTES",
+      "description": "Create rich overlays with multi-block content (text/markdown/code/rendered)",
+      "triggers": ["overlay", "annotation", "comment", "explain", "add note"],
+      "inputContract": {
+        "requiresSelection": false
+      },
+      "outputContract": {
+        "mustInclude": ["overlay_id", "blocks"],
+        "format": "overlay"
+      },
+      "estimatedTokens": 2000,
+      "priority": 8,
+      "version": "1.0.0",
+      "enabled": true
+    },
+    {
+      "name": "spaced-repetition-generator",
+      "macro": "EDIT_NOTES",
+      "description": "Generate flashcards from notes with spaced repetition schedule",
+      "triggers": ["flashcards", "spaced repetition", "review", "memorize", "quiz"],
+      "inputContract": {
+        "requiresSelection": false,
+        "acceptedNoteTypes": ["section", "full-note"]
+      },
+      "outputContract": {
+        "mustInclude": ["cards", "schedule"],
+        "format": "json"
+      },
+      "estimatedTokens": 2500,
+      "priority": 6,
+      "version": "1.0.0",
+      "enabled": true
+    },
+    {
+      "name": "exam-style-revision-pack",
+      "macro": "EDIT_NOTES",
+      "description": "Generate exam revision pack: definitions, typical questions, common mistakes, checkpoint quiz",
+      "triggers": ["exam", "revision", "practice", "test", "prepare"],
+      "inputContract": {
+        "requiresSelection": false,
+        "acceptedNoteTypes": ["full-note"]
+      },
+      "outputContract": {
+        "mustInclude": ["definitions", "questions", "mistakes", "quiz"],
+        "format": "json"
+      },
+      "estimatedTokens": 4000,
+      "priority": 5,
+      "version": "1.0.0",
+      "enabled": true
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "name": "webapp",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "build:debug": "tsc && vite build --sourcemap",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.10",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.2",
+    "typescript": "~5.9.3",
+    "vite": "^7.2.4"
+  },
+  "dependencies": {
+    "html2canvas": "^1.4.1",
+    "katex": "^0.16.28",
+    "pdfjs-dist": "5.4.296",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "react-pdf": "^10.3.0"
+  },
+  "overrides": {
+    "pdfjs-dist": "5.4.296"
+  }
+}

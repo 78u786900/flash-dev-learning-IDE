@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PDF</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #1e1e1e; min-height: 100vh; }
+    #container { overflow: auto; height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 16px 0; gap: 24px; }
+    .page-wrap { display: block; box-shadow: 0 2px 12px rgba(0,0,0,0.3); }
+    .page-wrap canvas { max-width: 100%; height: auto; display: block; }
+    #loading { color: #888; padding: 24px; }
+    #error { color: #c66; padding: 24px; }
+  </style>
+</head>
+<body>
+  <div id="loading">Loading PDF…</div>
+  <div id="error" style="display:none;"></div>
+  <div id="container" style="display:none;"></div>
+  <script type="module">
+    (async function() {
+      const SCROLL_STOP_MS = 400;
+      const params = new URLSearchParams(location.search);
+      const pdfUrl = params.get('url');
+      if (!pdfUrl) {
+        document.getElementById('loading').textContent = 'No PDF URL.';
+        return;
+      }
+      const loadingEl = document.getElementById('loading');
+      const errorEl = document.getElementById('error');
+      const containerEl = document.getElementById('container');
+
+      let pdfjsLib;
+      try {
+        pdfjsLib = await import('https://unpkg.com/pdfjs-dist@5.4.296/build/pdf.min.mjs');
+      } catch (e) {
+        errorEl.style.display = 'block';
+        errorEl.textContent = 'Failed to load PDF.js';
+        loadingEl.style.display = 'none';
+        return;
+      }
+      if (!pdfjsLib.GlobalWorkerOptions.workerSrc) {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://unpkg.com/pdfjs-dist@5.4.296/build/pdf.worker.min.mjs';
+      }
+
+      let doc;
+      try {
+        doc = await pdfjsLib.getDocument(pdfUrl).promise;
+      } catch (e) {
+        errorEl.style.display = 'block';
+        errorEl.textContent = 'Failed to load PDF: ' + (e?.message || e);
+        loadingEl.style.display = 'none';
+        return;
+      }
+      const numPages = doc.numPages;
+      loadingEl.style.display = 'none';
+      containerEl.style.display = 'flex';
+
+      const visibility = {};
+      let scrollStopTimer = null;
+      let lastReportedPage = 1;
+
+      function reportPage(page) {
+        if (page === lastReportedPage) return;
+        lastReportedPage = page;
+        if (window.parent !== window) {
+          window.parent.postMessage({ type: 'reading_position', page, totalPages: numPages }, '*');
+        }
+      }
+
+      function onScrollStop() {
+        let best = 1;
+        let bestRatio = visibility[1] ?? 0;
+        for (let p = 1; p <= numPages; p++) {
+          const r = visibility[p] ?? 0;
+          if (r > bestRatio) { bestRatio = r; best = p; }
+        }
+        reportPage(best);
+      }
+
+      const observer = new IntersectionObserver(
+        (entries) => {
+          for (const e of entries) {
+            const n = e.target.getAttribute('data-page');
+            if (n) visibility[Number(n)] = e.intersectionRatio;
+          }
+          if (scrollStopTimer) clearTimeout(scrollStopTimer);
+          scrollStopTimer = setTimeout(onScrollStop, SCROLL_STOP_MS);
+        },
+        { root: containerEl, rootMargin: '0px', threshold: [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1] }
+      );
+
+      const dpr = Math.min(window.devicePixelRatio || 1, 3);
+      const baseScale = 1.5;
+      const scale = baseScale * dpr;
+
+      for (let i = 1; i <= numPages; i++) {
+        const page = await doc.getPage(i);
+        const viewport = page.getViewport({ scale });
+        const wrap = document.createElement('div');
+        wrap.className = 'page-wrap';
+        wrap.setAttribute('data-page', String(i));
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        canvas.style.width = (viewport.width / dpr) + 'px';
+        canvas.style.height = (viewport.height / dpr) + 'px';
+        canvas.style.maxWidth = '100%';
+        const renderContext = { canvasContext: ctx, viewport };
+        await page.render(renderContext).promise;
+        wrap.appendChild(canvas);
+        containerEl.appendChild(wrap);
+        observer.observe(wrap);
+      }
+
+      setTimeout(onScrollStop, 100);
+    })();
+  </script>
+</body>
+</html>
