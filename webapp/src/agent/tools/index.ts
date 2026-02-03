@@ -44,6 +44,7 @@ const RUNNERS: Record<string, ToolRunner> = {
   generate_qa_from_page: pdfTools.run_generate_qa_from_page as ToolRunner,
   extract_definitions: pdfTools.run_extract_definitions as ToolRunner,
   search_workspace: searchTools.run_search_workspace as ToolRunner,
+  generate_plantuml_diagram: noteTools.run_generate_plantuml_diagram as ToolRunner,
 }
 
 export async function executeTool(

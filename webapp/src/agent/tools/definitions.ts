@@ -257,4 +257,31 @@ export const AGENT_TOOL_DEFINITIONS: GeminiFunctionDeclaration[] = [
       required: ['query'],
     },
   },
+  // —— PlantUML diagrams (separate from LaTeX; for use case, sequence, ER, flowchart, etc.) ——
+  {
+    name: 'generate_plantuml_diagram',
+    description: 'Generate a PlantUML diagram and add it to the current note. Use ONLY for: use case, sequence, class, activity/flowchart, state, ER/entity-relationship, component, deployment, Gantt, mind map, WBS, user journey, etc. Do NOT use for commutative diagrams or abstract-algebra diagrams (exact sequences, morphisms, category theory, pullbacks) – those must use LaTeX \\begin{CD}...\\end{CD} in note content via verbal_to_structured or update_section. Do NOT use for LaTeX math formulas.',
+    parameters: {
+      type: 'object',
+      properties: {
+        diagram_type: {
+          type: 'string',
+          description: 'Type of diagram: sequence, usecase, class, activity, state, component, deployment, object, timing, er, mindmap, gantt, wbs, chronology, salt (wireframe), nwdiag (network), or other',
+        },
+        description: {
+          type: 'string',
+          description: 'What the diagram should show (e.g. "User logs in, then sees dashboard; admin can delete users")',
+        },
+        section_title: {
+          type: 'string',
+          description: 'Title for the new note section (e.g. "Login use case diagram")',
+        },
+        target_note_id: {
+          type: 'string',
+          description: 'Note id to add the section to; omit to use current note',
+        },
+      },
+      required: ['diagram_type', 'description'],
+    },
+  },
 ]

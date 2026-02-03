@@ -6,7 +6,7 @@ function getNoteId(ctx: AgentContext): string | null {
   return ctx.note?.id ?? null
 }
 
-/** create_note: 建立新筆記並回傳 id，供後續 page_to_note 用 target_note_id */
+/** create_note: 建立新筆記並回傳 id；將新筆記存入 ctx.lastCreatedNote 以便同一次 run 內嘅後續工具（如 generate_plantuml_diagram、page_to_note）可以揾到。 */
 export async function run_create_note(
   params: { name?: string },
   ctx: AgentContext,
@@ -15,10 +15,12 @@ export async function run_create_note(
   const name = params.name?.trim() || '未命名筆記'
   const createNote = ctx.createNote
   if (!createNote) return { success: false, error: '無法建立筆記（createNote 未提供）' }
-  const noteId = createNote(name)
+  const newNote = createNote(name)
+  const mutableCtx = ctx as AgentContext & { lastCreatedNote?: Note }
+  mutableCtx.lastCreatedNote = newNote
   return {
     success: true,
-    text: `已建立筆記「${name}」。請喺後續每次 page_to_note 呼叫入面傳 target_note_id: "${noteId}"，將 section 加去呢個新筆記。`,
+    text: `已建立筆記「${name}」。請喺後續每次 page_to_note 或 generate_plantuml_diagram 呼叫入面傳 target_note_id: "${newNote.id}"，將 section 加去呢個新筆記。`,
   }
 }
 
@@ -150,6 +152,8 @@ export async function run_merge_sections(
 function getNote(ctx: AgentContext, noteId?: string): Note | null {
   const id = (noteId ?? ctx.note?.id)?.trim()
   if (!id) return ctx.note ?? null
+  const lastCreated = (ctx as AgentContext & { lastCreatedNote?: Note }).lastCreatedNote
+  if (lastCreated?.id === id) return lastCreated
   const note = ctx.notes?.find(n => n.id === id) ?? (ctx.note?.id === id ? ctx.note : null)
   return note ?? null
 }
@@ -279,5 +283,61 @@ export async function run_delete_section(
     success: true,
     text: `已從筆記「${note.name}」刪除 ${sectionIds.length} 個 section（序號：${indicesStr}）。`,
     action: { type: 'delete_section', noteId: note.id, sectionIds },
+  }
+}
+
+/** Extract PlantUML source from model output: ensure it has @start... @end... block */
+function extractPlantUmlSource(raw: string): string | null {
+  const trimmed = raw.trim()
+  const startMatch = trimmed.match(/@start(\w+)/i)
+  if (!startMatch) return null
+  const tag = startMatch[1]
+  const startIdx = startMatch.index!
+  const endTag = '@end' + tag
+  const endIdx = trimmed.toLowerCase().indexOf(endTag.toLowerCase(), startIdx)
+  if (endIdx === -1) return null
+  const afterEnd = endIdx + endTag.length
+  return trimmed.slice(startIdx, afterEnd).trim()
+}
+
+/** generate_plantuml_diagram: Generate a PlantUML diagram and add as a new section (separate from LaTeX). */
+export async function run_generate_plantuml_diagram(
+  params: { diagram_type?: string; description?: string; section_title?: string; target_note_id?: string },
+  ctx: AgentContext,
+  callGemini: CallGeminiFn
+): Promise<ToolResult> {
+  const diagramType = (params.diagram_type ?? 'sequence').trim().toLowerCase()
+  const description = (params.description ?? '').trim()
+  if (!description) return { success: false, error: '請提供 description（描述要畫咩圖）。' }
+
+  const prompt = `You are a PlantUML expert. Generate ONLY valid PlantUML source code for a ${diagramType} diagram. User request: ${description}
+
+Rules:
+- Output ONLY the diagram code. No markdown, no explanation, no \`\`\` wrapper.
+- Start with @startuml and end with @enduml (for mindmap use @startmindmap/@endmindmap, for gantt use @startgantt/@endgantt, for wbs use @startwbs/@endwbs; for all other types use @startuml/@enduml).
+- Use clear labels in English or the user's language. Keep the diagram readable and well-structured.
+- For "activity" or "flowchart" use PlantUML activity diagram syntax (start, :step;, if/else, stop).
+- For "er" or "entity-relationship" use "entity" and "relationship" in class diagram or the ER diagram style.
+- For "sequence" use participant, ->, -->, etc.
+- For "usecase": Put actor and usecase first so the server recognizes it as use case (not component). Use "actor Name", "usecase \\"Label\\" as ID" or "(Label)". For grouping use "package \\"System\\" { ... }" not "rectangle" (rectangle can be mis-parsed as component). Use "left to right direction" after actor/usecase lines. Links: actor --> (UseCase), (A) -- (B) : label.
+- For "class" use class, attributes, methods, relationships.
+- For "dot" or "digraph" or "commutative diagram": Use @startuml then the very first line must be digraph Name {. Put ALL nodes and ALL edges INSIDE the single digraph block (before the closing }). Do NOT put any edges or statements after the closing }; the server will reject content outside the braces.
+Output the complete PlantUML source now:`
+
+  const raw = await callGemini(prompt, 'Output only the PlantUML code, no other text. Start with @startuml or @startmindmap or @startgantt etc. and end with the matching @end.')
+  const source = extractPlantUmlSource(raw)
+  if (!source) {
+    return { success: false, error: '無法從回覆中提取 PlantUML 代碼。請確保有 @startuml ... @enduml 或對應嘅 @start/@end 區塊。', text: raw.slice(0, 500) }
+  }
+
+  const note = getNote(ctx, params.target_note_id)
+  if (!note) return { success: true, text: `已生成 PlantUML 圖。\n\n\`\`\`\n${source}\n\`\`\`\n\n（未指定有效筆記，所以未加入 section；請將以上代碼複製到筆記嘅 PlantUML 區塊。）` }
+
+  const sectionTitle = (params.section_title ?? `${diagramType} diagram`).trim() || `${diagramType} diagram`
+  const action: ToolResultAction = { type: 'add_section', noteId: note.id, title: sectionTitle, content: source }
+  return {
+    success: true,
+    text: `已生成 ${diagramType} 圖並加入筆記「${note.name}」嘅新 section「${sectionTitle}」。`,
+    action,
   }
 }

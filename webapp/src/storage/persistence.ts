@@ -16,10 +16,12 @@ const TIMELINE_CAP = 200
 const CHAT_CAP = 100
 const DEBOUNCE_MS = 300
 
-/** Stored chat message (serializable; no blob URLs) */
+/** Stored chat message (serializable; no blob URLs). imageDataUrl is optional for user messages with attached image. */
 export interface StoredChatMessage {
   role: 'user' | 'agent'
   text: string
+  /** Data URL (e.g. data:image/png;base64,...) for user-attached image; stored so history shows preview. */
+  imageDataUrl?: string
   agentRun?: {
     logs: string[]
     toolCalls?: Array<{ name: string; args: Record<string, unknown>; result: string; success: boolean }>
@@ -115,7 +117,8 @@ export function loadChat(): StoredChatMessage[] {
     (m) =>
       m &&
       (m.role === 'user' || m.role === 'agent') &&
-      typeof m.text === 'string'
+      typeof m.text === 'string' &&
+      (m.imageDataUrl === undefined || (typeof m.imageDataUrl === 'string' && m.imageDataUrl.startsWith('data:image/')))
   )
   return valid.slice(-CHAT_CAP)
 }

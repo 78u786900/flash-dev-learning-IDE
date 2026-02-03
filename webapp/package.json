@@ -20,6 +20,7 @@
     "html2canvas": "^1.4.1",
     "katex": "^0.16.28",
     "pdfjs-dist": "5.4.296",
+    "plantuml-encoder": "^1.4.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "react-pdf": "^10.3.0"

@@ -102,7 +102,7 @@ RULES – DO THESE:
 5. "Cantonese with emojis for grade 10" → use suggested_title like "第X頁總結（中四，含 emoji）" and keep content suitable for 中四.
 6. Workspace search (whole file system as search engine): Use search_workspace(query, scope?) to do macro semantic/keyword search across all notes and files. You can run multiple searches (cross-file); use the results to choose what to use as next-round input (e.g. which note_id, section_index, file_id, or PDF page). If the user is very specific ("only read these files" / "only search in note X and file Y"), use scope: note_ids:id1,id2 or file_ids:id1,id2 so the result set is limited; then the user is effectively choosing which query result to take as next input.
 
-Tools: reply, create_note, page_to_note, summarize_page, verbal_to_structured, generate_quiz, reorder_sections, search_sections, search_workspace, update_section, rename_note, delete_note, delete_section, etc.
+Tools: reply, create_note, page_to_note, summarize_page, verbal_to_structured, generate_quiz, generate_plantuml_diagram, reorder_sections, search_sections, search_workspace, update_section, rename_note, delete_note, delete_section, etc.
 - Reorder sections: use reorder_sections(note_id?, section_order) with comma-separated 1-based indices (e.g. "3,1,2").
 - Find sections: use search_sections(note_id?, query) to get section indices by keyword (e.g. query "第9頁" or "page 9" to find section index for page 9).
 - Workspace-wide search: use search_workspace(query, mode?, scope?) to search across all notes, files, and PDF page text. mode: "keyword" (default)=exact word match; "semantic"=語意搜尋 (meaning-based). Use mode=semantic when user asks for "意思相近" or "相關內容". scope: "all" | "notes" | "files" | "note_ids:id1,id2" | "file_ids:id1,id2". Use results (note_id, file_id, page) as next input.
@@ -115,9 +115,13 @@ When the user says hello or "what can you do", call reply. When they ask for "fi
 CRITICAL – When a tool returns an error: Do NOT call reply with success. Call reply with the actual reason from the tool (e.g. 未揀中要處理嘅 PDF、該頁冇文字、讀取失敗). No "please load" or "wait" – the agent reads from uploaded/selected files on demand.
 
 NOTES – LaTeX only, valid commands and spacing:
-- Allowed commands ONLY: \\section{...}, \\subsection{...}, \\subsubsection{...}, \\textbf{...}, \\textit{...}, \\texttt{...}, \\begin{itemize}\\item ...\\end{itemize}, \\begin{enumerate}\\item ...\\end{enumerate}, $...$, $$...$$. Do NOT use any other \\command (e.g. no \\tovthfs, \\xxx, or invented commands); they break rendering.
+- Allowed: \\section{...}, \\subsection{...}, \\subsubsection{...}, \\textbf{...}, \\textit{...}, \\texttt{...}, \\begin{itemize}\\item ...\\end{itemize}, \\begin{enumerate}\\item ...\\end{enumerate}, $...$, $$...$$, \\begin{CD}...\\end{CD} for commutative diagrams, and \\begin{array}{cols}...\\end{array} for tables (column spec: c=center, l=left, r=right, | = vertical rule; rows with \\\\, cells with &; \\hline for horizontal rule). Do NOT use other \\commands (e.g. no \\tovthfs, \\xxx, or invented commands); they break rendering.
 - Spacing for readability: After every closing brace } (e.g. after \\textbf{群論}), if the next character is a letter (CJK or Latin), add a space. Example: \\textbf{群論} 是對 (space before 是), not \\textbf{群論}是對. Put a space before and after inline math $...$ when it sits between words (e.g. 我們有 $H = \\langle x \\rangle$ 其中).
-- No markdown: do not use ** or ##. When generating or editing note sections (page_to_note, verbal_to_structured, merge_sections, expand_section, update_section), output only the allowed LaTeX commands with proper spacing so notes are easy to read. If source text has garbled characters, use the correct Chinese/math meaning; do not copy invalid symbols into LaTeX.`
+- No markdown: do not use ** or ##. When generating or editing note sections (page_to_note, verbal_to_structured, merge_sections, expand_section, update_section), output only the allowed LaTeX commands with proper spacing so notes are easy to read. If source text has garbled characters, use the correct Chinese/math meaning; do not copy invalid symbols into LaTeX.
+
+DIAGRAMS – choose LaTeX vs PlantUML by diagram kind:
+- Commutative diagrams / abstract algebra (exact sequences, morphisms, category theory, pullbacks, quotient maps, short exact sequence, etc.): use LaTeX in note content. Write \\begin{CD} ... \\end{CD} (with or without $$ or \\[ \\] around it). Only horizontal (@>>> @<<< @>label>>) and vertical (@VVV @AAA @VlabelV @AlabelA) arrows; no diagonals. Any arrow label that contains brackets or subscripts (e.g. coordinate map [-]_B) MUST be wrapped in braces: use @V{[-]_B}VV and @V{[-]_{B'}}VV, never @V[-]BVV (unbraced [ ] breaks KaTeX). Use verbal_to_structured or update_section. Do NOT use generate_plantuml_diagram for these.
+- All other diagrams (flowchart, use case, sequence, ER, class, activity, state, Gantt, mind map, component, deployment, user journey, etc.): use generate_plantuml_diagram. Choose diagram_type to match: sequence, usecase, class, activity, state, er, mindmap, gantt, wbs, component, deployment, etc.`
 
 /** Map tool name to layer (macro) and skill label for logs */
 const TOOL_LAYER_SKILL: Record<string, { layer: string; skill: string }> = {
@@ -141,6 +145,7 @@ const TOOL_LAYER_SKILL: Record<string, { layer: string; skill: string }> = {
   generate_qa_from_page: { layer: 'READ_FILES', skill: 'generate_qa_from_page' },
   extract_definitions: { layer: 'READ_FILES', skill: 'extract_definitions' },
   search_workspace: { layer: 'READ_FILES', skill: 'search_workspace' },
+  generate_plantuml_diagram: { layer: 'EDIT_NOTES', skill: 'generate_plantuml_diagram' },
 }
 
 export interface AgentChatOptions {

@@ -1,16 +1,25 @@
-import { useMemo, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
+import { encode } from 'plantuml-encoder'
 
 export type ContentSegment = { type: 'text'; value: string } | { type: 'display'; value: string } | { type: 'inline'; value: string }
 
-/** Block types: LaTeX-first (\section, \begin{itemize}, $$) with markdown fallback (##, -, *) */
-type BlockType = 'paragraph' | 'h2' | 'h3' | 'h4' | 'ul' | 'ol' | 'display_math'
+/** PlantUML server: in dev use Vite proxy (same-origin); in prod use public server. PNG endpoint is most reliable. */
+const PLANTUML_IMG_BASE =
+  typeof import.meta !== 'undefined' && import.meta.env?.DEV
+    ? '/plantuml/img/'  // Vite proxy forwards to https://www.plantuml.com/plantuml/img/
+    : 'https://www.plantuml.com/plantuml/img/'
+
+/** Block types: LaTeX-first (\section, \begin{itemize}, $$), PlantUML (@startuml...@enduml), markdown fallback */
+type BlockType = 'paragraph' | 'h2' | 'h3' | 'h4' | 'ul' | 'ol' | 'display_math' | 'plantuml'
 interface Block {
   type: BlockType
   content?: string
   items?: string[]
   latex?: string
+  /** Raw PlantUML source (including @startuml / @enduml) for encoding */
+  plantuml?: string
 }
 
 function escapeHtml(s: string): string {
@@ -37,12 +46,15 @@ function findBalancedBraces(s: string, openIndex: number): { content: string; en
   return { content: s.slice(openIndex + 1, i - 1), endIndex: i - 1 }
 }
 
-/** Find next \section{, \subsection{, \subsubsection{, \begin{itemize}, \begin{enumerate}, or $$ */
+/** Find next \section{, \subsection{, \subsubsection{, \[, \begin{itemize}, \begin{enumerate}, or $$ */
 function nextBlockStart(s: string, from: number): { kind: string; index: number; endTag?: string } | null {
   const sectionRe = /\\(section|subsection|subsubsection)\s*\{/g
   sectionRe.lastIndex = from
   let m = sectionRe.exec(s)
   if (m) return { kind: m[1], index: m.index }
+
+  const bracketOpen = s.indexOf('\\[', from)
+  if (bracketOpen !== -1) return { kind: 'display_bracket', index: bracketOpen }
 
   const beginRe = /\\begin\s*\{(\w+)\}/g
   beginRe.lastIndex = from
@@ -55,7 +67,23 @@ function nextBlockStart(s: string, from: number): { kind: string; index: number;
   return null
 }
 
-/** Split content into blocks: LaTeX \section{}, \begin{itemize}, $$...$$, then markdown ## / - / 1. fallback, then paragraphs */
+/** Find next PlantUML block (@startuml...@enduml or @startmindmap...@endmindmap etc.) from fromIndex. Returns { start, end, source } or null. */
+function findPlantUmlBlock(s: string, fromIndex: number): { start: number; end: number; source: string } | null {
+  const startRe = /@start(\w+)/g
+  startRe.lastIndex = fromIndex
+  const m = startRe.exec(s)
+  if (!m) return null
+  const tag = m[1]
+  const start = m.index
+  const endTag = '@end' + tag
+  const endIdx = s.indexOf(endTag, start)
+  if (endIdx === -1) return null
+  const end = endIdx + endTag.length
+  const source = s.slice(start, end).trim()
+  return { start, end, source }
+}
+
+/** Split content into blocks: PlantUML (@startuml...@enduml), LaTeX \section{}, \begin{itemize}, $$...$$, markdown fallback, paragraphs */
 function parseBlocks(content: string): Block[] {
   if (!content?.trim()) return [{ type: 'paragraph', content: content || '' }]
   const blocks: Block[] = []
@@ -63,6 +91,17 @@ function parseBlocks(content: string): Block[] {
   const s = content
 
   while (pos < s.length) {
+    const plantumlBlock = findPlantUmlBlock(s, pos)
+    if (plantumlBlock) {
+      if (plantumlBlock.start > pos) {
+        const para = s.slice(pos, plantumlBlock.start).trim()
+        if (para) blocks.push({ type: 'paragraph', content: para })
+      }
+      blocks.push({ type: 'plantuml', plantuml: plantumlBlock.source })
+      pos = plantumlBlock.end
+      continue
+    }
+
     const next = nextBlockStart(s, pos)
     if (next) {
       if (next.kind === 'section' || next.kind === 'subsection' || next.kind === 'subsubsection') {
@@ -92,6 +131,37 @@ function parseBlocks(content: string): Block[] {
           const items = body.split(/\s*\\item\s*/).map(x => x.trim()).filter(Boolean)
           blocks.push({ type: next.endTag === 'enumerate' ? 'ol' : 'ul', items })
           pos = endIdx + endTag.length
+          continue
+        }
+      }
+      if (next.kind === 'begin' && (next.endTag === 'CD' || next.endTag === 'array')) {
+        const endTag = `\\end{${next.endTag}}`
+        const endIdx = s.indexOf(endTag, next.index)
+        if (endIdx !== -1) {
+          if (next.index > pos) {
+            const para = s.slice(pos, next.index).trim()
+            if (para) blocks.push({ type: 'paragraph', content: para })
+          }
+          const fullBlock = s.slice(next.index, endIdx + endTag.length)
+          blocks.push({ type: 'display_math', latex: fullBlock })
+          pos = endIdx + endTag.length
+          continue
+        }
+      }
+      if (next.kind === 'display_bracket') {
+        let searchStart = next.index + 2
+        let endIdx = s.indexOf('\\]', searchStart)
+        while (endIdx !== -1 && endIdx > 0 && s[endIdx - 1] === '\\') {
+          searchStart = endIdx + 2
+          endIdx = s.indexOf('\\]', searchStart)
+        }
+        if (endIdx !== -1) {
+          if (next.index > pos) {
+            const para = s.slice(pos, next.index).trim()
+            if (para) blocks.push({ type: 'paragraph', content: para })
+          }
+          blocks.push({ type: 'display_math', latex: s.slice(next.index + 2, endIdx).trim() })
+          pos = endIdx + 2
           continue
         }
       }
@@ -254,6 +324,56 @@ function renderLatex(latex: string, displayMode: boolean): string {
   }
 }
 
+/** Normalize PlantUML source so encoding and server accept it (line endings, trim). */
+function normalizePlantUmlSource(source: string): string {
+  return source.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim()
+}
+
+/** Encode PlantUML source for server URL; returns null on error. */
+function encodePlantUmlUrl(source: string): string | null {
+  try {
+    const normalized = normalizePlantUmlSource(source)
+    if (!normalized) return null
+    const encoded = encode(normalized)
+    if (!encoded) return null
+    return PLANTUML_IMG_BASE + encoded
+  } catch {
+    return null
+  }
+}
+
+/** Renders a PlantUML diagram with fallback on load error (e.g. server unreachable or invalid diagram). */
+function PlantUmlBlock({ source, className }: { source: string; className?: string }) {
+  const [loadError, setLoadError] = useState(false)
+  const url = useMemo(() => encodePlantUmlUrl(source), [source])
+  if (!url) {
+    return <pre className={`ide-plantuml-fallback ${className ?? ''}`.trim()}>{source}</pre>
+  }
+  if (loadError) {
+    return (
+      <div className={className}>
+        <p className="ide-plantuml-error">Diagram could not be loaded (check syntax or network).</p>
+        <pre className="ide-plantuml-fallback">{source}</pre>
+      </div>
+    )
+  }
+  return (
+    <figure className="ide-plantuml-figure">
+      <img
+        src={url}
+        alt="PlantUML diagram"
+        className="ide-plantuml-img"
+        loading="lazy"
+        referrerPolicy="no-referrer"
+        onError={() => setLoadError(true)}
+      />
+      <figcaption className="ide-plantuml-caption">
+        Rendered by plantuml.com (banner/QR in image is from their server).
+      </figcaption>
+    </figure>
+  )
+}
+
 function renderInlineSegment(seg: InlineSeg, key: number): ReactNode {
   if (seg.type === 'text') return <span key={key}>{seg.value}</span>
   if (seg.type === 'bold') return <strong key={key} className="ide-note-bold">{renderInlineContent(seg.value)}</strong>
@@ -286,6 +406,13 @@ export function NoteContentWithLatex({ content, className }: NoteContentWithLate
   return (
     <div className={`ide-note-body ${className ?? ''}`.trim()}>
       {blocks.map((block, i) => {
+        if (block.type === 'plantuml' && block.plantuml) {
+          return (
+            <div key={i} className="ide-plantuml-block">
+              <PlantUmlBlock source={block.plantuml} />
+            </div>
+          )
+        }
         if (block.type === 'display_math' && block.latex) {
           return (
             <div

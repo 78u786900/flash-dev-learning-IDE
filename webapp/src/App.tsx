@@ -101,9 +101,13 @@ function App() {
   const [activeChatId, setActiveChatId] = useState<string>(() => getInitialChatState().activeId)
   const [confirmDialog, setConfirmDialog] = useState<{
     open: boolean
-    type: 'deleteFile' | 'deleteChat' | null
+    type: 'deleteFile' | 'deleteChat' | 'deleteNote' | 'deleteSection' | 'deleteRecording' | null
     fileId?: string
     chatId?: string
+    noteId?: string
+    sectionIds?: string[]
+    sectionId?: string
+    recId?: string
   }>({ open: false, type: null })
   const [fullscreenLock, setFullscreenLock] = useState(false)
   const [commandOpen, setCommandOpen] = useState(false)
@@ -259,8 +263,8 @@ function App() {
     logAction('section_edited', `已刪除 ${sectionIds.length} 個章節`)
   }, [logAction])
 
-  /** Create a new note, switch to it, and return its id. Used by agent create_note tool so sections can be added to this note via target_note_id. */
-  const createNoteAndReturnId = useCallback((name: string): string => {
+  /** Create a new note, switch to it, and return the full Note. Used by agent create_note tool so sections can be added in the same run (context.lastCreatedNote). */
+  const createNoteAndReturnId = useCallback((name: string): Note => {
     const newNote: Note = {
       id: `n${Date.now()}`,
       name: name || '未命名筆記',
@@ -271,7 +275,7 @@ function App() {
     setActiveNoteId(newNote.id)
     setActiveFileId(null)
     logAction('created_note', `建立筆記「${newNote.name}」`)
-    return newNote.id
+    return newNote
   }, [logAction])
 
   /** Load persisted files from IndexedDB on mount */
@@ -320,6 +324,18 @@ function App() {
     setConfirmDialog({ open: true, type: 'deleteFile', fileId: id })
   }, [])
 
+  const requestDeleteNote = useCallback((noteId: string) => {
+    setConfirmDialog({ open: true, type: 'deleteNote', noteId })
+  }, [])
+
+  const requestDeleteSection = useCallback((noteId: string, sectionIds: string[]) => {
+    setConfirmDialog({ open: true, type: 'deleteSection', noteId, sectionIds })
+  }, [])
+
+  const requestDeleteRecording = useCallback((noteId: string, sectionId: string, recId: string) => {
+    setConfirmDialog({ open: true, type: 'deleteRecording', noteId, sectionId, recId })
+  }, [])
+
   const performDeleteFile = useCallback((id: string) => {
     const file = files.find(f => f.id === id)
     if (file) URL.revokeObjectURL(file.url)
@@ -365,9 +381,18 @@ function App() {
       performDeleteFile(confirmDialog.fileId)
     } else if (confirmDialog.type === 'deleteChat' && confirmDialog.chatId) {
       performDeleteChat(confirmDialog.chatId)
+    } else if (confirmDialog.type === 'deleteNote' && confirmDialog.noteId) {
+      deleteNote(confirmDialog.noteId)
+    } else if (confirmDialog.type === 'deleteSection' && confirmDialog.noteId && confirmDialog.sectionIds?.length) {
+      deleteSection(confirmDialog.noteId, confirmDialog.sectionIds)
+    } else if (confirmDialog.type === 'deleteRecording' && confirmDialog.noteId && confirmDialog.sectionId && confirmDialog.recId) {
+      updateSection(confirmDialog.noteId, confirmDialog.sectionId, (s) => ({
+        ...s,
+        recordings: (s.recordings ?? []).filter((r) => r.id !== confirmDialog.recId),
+      }))
     }
     setConfirmDialog({ open: false, type: null })
-  }, [confirmDialog.type, confirmDialog.fileId, confirmDialog.chatId, performDeleteFile, performDeleteChat])
+  }, [confirmDialog.type, confirmDialog.fileId, confirmDialog.chatId, confirmDialog.noteId, confirmDialog.sectionIds, confirmDialog.sectionId, confirmDialog.recId, performDeleteFile, performDeleteChat, deleteNote, deleteSection, updateSection])
 
   const handleConfirmDialogCancel = useCallback(() => {
     setConfirmDialog({ open: false, type: null })
@@ -393,6 +418,23 @@ function App() {
   const progress = safeNote.sections.length
     ? Math.round((safeNote.sections.filter(s => s.done).length / safeNote.sections.length) * 100)
     : 0
+
+  /** On mount and when page is shown (refresh or restored from bfcache), sync notes from storage so we always show the latest saved state. */
+  useEffect(() => {
+    const syncNotesFromStorage = () => {
+      const loaded = loadNotes()
+      if (loaded != null && loaded.length > 0) {
+        setNotes(loaded)
+        setActiveNoteId(prev => (loaded.some(n => n.id === prev) ? prev : loaded[0].id))
+      }
+    }
+    syncNotesFromStorage()
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) syncNotesFromStorage()
+    }
+    window.addEventListener('pageshow', onPageShow)
+    return () => window.removeEventListener('pageshow', onPageShow)
+  }, [])
 
   /** Prevent blank screen: ensure we never have empty notes or stale activeNoteId */
   useEffect(() => {
@@ -534,6 +576,7 @@ function App() {
           onDropFiles={addFiles}
           onRenameFile={renameFile}
           onDeleteFile={requestDeleteFile}
+          onRequestDeleteNote={requestDeleteNote}
         />
         <div className="ide-canvas-wrap">
           <CanvasAreaWithSelection
@@ -548,6 +591,8 @@ function App() {
                 onUpdateSection={(sectionId, updater) => updateSection(displayNote.id, sectionId, updater)}
                 onAddSection={() => addSection(displayNote.id)}
                 onSectionDone={(title) => logAction('section_done', `完成章節「${title}」`)}
+                onRequestDeleteSection={(sectionId) => requestDeleteSection(displayNote.id, [sectionId])}
+                onRequestDeleteRecording={(sectionId, recId) => requestDeleteRecording(displayNote.id, sectionId, recId)}
               />
             ) : activeFile ? (
               <FileViewer
@@ -628,11 +673,25 @@ function App() {
       {confirmDialog.open && confirmDialog.type && (
         <ConfirmDialog
           open={confirmDialog.open}
-          title={confirmDialog.type === 'deleteFile' ? '刪除檔案' : '刪除對話'}
+          title={
+            confirmDialog.type === 'deleteFile' ? '刪除檔案' :
+            confirmDialog.type === 'deleteChat' ? '刪除對話' :
+            confirmDialog.type === 'deleteNote' ? '刪除筆記' :
+            confirmDialog.type === 'deleteSection' ? '刪除此章節' :
+            confirmDialog.type === 'deleteRecording' ? '刪除此錄音' : '確認'
+          }
           message={
             confirmDialog.type === 'deleteFile'
               ? '確定要刪除這個檔案？刪除後無法復原。'
-              : '確定要刪除這個對話？刪除後無法復原。'
+              : confirmDialog.type === 'deleteChat'
+              ? '確定要刪除這個對話？刪除後無法復原。'
+              : confirmDialog.type === 'deleteNote'
+              ? '確定要刪除這份筆記？刪除後無法復原。'
+              : confirmDialog.type === 'deleteSection'
+              ? '確定要刪除此章節？刪除後無法復原。'
+              : confirmDialog.type === 'deleteRecording'
+              ? '確定要刪除此段錄音？刪除後無法復原。'
+              : ''
           }
           confirmLabel="刪除"
           cancelLabel="取消"

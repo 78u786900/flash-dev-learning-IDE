@@ -1,8 +1,16 @@
+export interface SectionRecording {
+  id: string
+  dataUrl: string
+  duration?: number
+}
+
 export interface Section {
   id: string
   title: string
   content: string
   done: boolean
+  /** Optional voice recordings for this section (multiple allowed). */
+  recordings?: SectionRecording[]
 }
 
 export interface Note {

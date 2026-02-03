@@ -22,8 +22,10 @@ export interface AgentContext {
   totalPdfPages?: number
   /** Chapter boundaries from PDF outline/TOC (title + start page). Use to get page range for "chapter 1" etc. */
   pdfChapters?: Array<{ title: string; page: number }>
-  /** Create a new note with the given name and return its id. Use for "create a new note" then add sections to it via target_note_id. */
-  createNote?: (name: string) => string
+  /** Create a new note with the given name; returns the new Note so tools in the same run can add sections to it (context.notes is a snapshot and does not include the new note until next render). */
+  createNote?: (name: string) => Note
+  /** Set by create_note tool so getNote() can resolve the newly created note by id in the same agent run. */
+  lastCreatedNote?: Note
   /** Get PDF page text on demand (no pre-load). When a tool needs page N, call this with current file URL and page number. */
   getPdfPageTextOnDemand?: (fileUrl: string, pageNumber: number) => Promise<string>
   /** Get rendered PDF page image (PNG data URL) on demand so page tools can also \"see\" diagrams / non-text content. */

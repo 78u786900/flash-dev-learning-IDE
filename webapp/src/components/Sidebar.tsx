@@ -13,6 +13,7 @@ interface SidebarProps {
   onDropFiles: (files: File[]) => void
   onRenameFile?: (id: string, newName: string) => void
   onDeleteFile?: (id: string) => void
+  onRequestDeleteNote?: (noteId: string) => void
 }
 
 const FILE_ICONS: Record<string, string> = {
@@ -50,6 +51,7 @@ export function Sidebar({
   onDropFiles,
   onRenameFile,
   onDeleteFile,
+  onRequestDeleteNote,
 }: SidebarProps) {
   const [newNoteName, setNewNoteName] = useState('')
   const [outlineOpen, setOutlineOpen] = useState(true)
@@ -118,7 +120,18 @@ export function Sidebar({
   return (
     <aside className="ide-sidebar">
       <div className="ide-sidebar-section">
-        <div className="ide-sidebar-section-title">LEARNING_IDE</div>
+        <div className="ide-sidebar-header-row">
+          <span className="ide-sidebar-section-title">LEARNING_IDE</span>
+          <button
+            type="button"
+            className="ide-add-note-btn"
+            onClick={() => onAddNote('新筆記')}
+            title="加新筆記"
+            aria-label="加新筆記"
+          >
+            +
+          </button>
+        </div>
         <div
           className={`ide-sidebar-dropzone ${isDragging ? 'active' : ''}`}
           onDragOver={handleDragOver}
@@ -135,7 +148,7 @@ export function Sidebar({
             onClick={() => onSelectNote(note.id)}
           >
             <span className="icon">📄</span>
-            <span>{note.name}</span>
+            <span className="ide-sidebar-item-name" title={note.name}>{note.name}</span>
           </div>
         ))}
         {files.map(file => (

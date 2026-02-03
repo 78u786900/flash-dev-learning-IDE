@@ -37,5 +37,13 @@ export default defineConfig({
   },
   server: {
     sourcemapIgnoreList: (sourcePath) => sourcePath.includes('node_modules'),
+    proxy: {
+      // Proxy PlantUML server so diagram images load same-origin (avoids referrer/CORS issues)
+      '/plantuml': {
+        target: 'https://www.plantuml.com',
+        changeOrigin: true,
+        secure: true,
+      },
+    },
   },
 })

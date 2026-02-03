@@ -4,6 +4,8 @@ import { runAgentChatWithTools } from '../agent/geminiWithTools'
 import { chatLogToTerminal } from '../agent/chatLog'
 import type { StoredChatMessage } from '../storage/persistence'
 
+const MAX_IMAGE_DATAURL_LENGTH = 800 * 1024 // ~800KB; skip storing if larger to avoid localStorage quota
+
 export type ChatMode = 'agent' | 'ask'
 export type GeminiModel = 'gemini-3-flash' | 'gemini-2.5-pro'
 
@@ -103,9 +105,54 @@ export function ChatPanel({
   const [error, setError] = useState<string | null>(null)
   /** Live log lines while agent is running (Cursor-style real-time stream) */
   const [liveAgentRun, setLiveAgentRun] = useState<{ logs: string[] } | null>(null)
+  /** Image attached via chat bar (upload or paste); takes precedence over canvas attachedImage when sending. */
+  const [pendingImage, setPendingImage] = useState<string | null>(null)
+  const [dropdownOpen, setDropdownOpen] = useState<'mode' | 'model' | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const liveRunEndRef = useRef<HTMLDivElement>(null)
   const tabsScrollRef = useRef<HTMLDivElement>(null)
+  const chatbarRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const onDocClick = (e: MouseEvent) => {
+      if (chatbarRef.current?.contains(e.target as Node)) return
+      setDropdownOpen(null)
+    }
+    document.addEventListener('click', onDocClick)
+    return () => document.removeEventListener('click', onDocClick)
+  }, [])
+
+  /** Image that will be sent with the next message (chat-bar upload/paste or canvas capture). */
+  const imageToSend = pendingImage ?? attachedImage
+
+  const clearAttachedImage = () => {
+    setPendingImage(null)
+    onClearAttached?.()
+  }
+
+  const setImageFromFile = (file: File) => {
+    if (!file.type.startsWith('image/')) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      const dataUrl = reader.result as string
+      if (dataUrl) setPendingImage(dataUrl)
+    }
+    reader.readAsDataURL(file)
+  }
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items
+    if (!items) return
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        e.preventDefault()
+        const file = item.getAsFile()
+        if (file) setImageFromFile(file)
+        return
+      }
+    }
+  }
 
   const apiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined
   const hasApiKey = Boolean(apiKey?.trim())
@@ -128,14 +175,16 @@ export function ChatPanel({
 
   const send = async () => {
     const text = input.trim()
-    if (!text && !attachedImage) return
+    if (!text && !imageToSend) return
     setInput('')
     const displayText = text || '（附圖）'
-    setMessages(prev => [...prev, { role: 'user', text: displayText }])
+    const imageForMessage = imageToSend && imageToSend.length <= MAX_IMAGE_DATAURL_LENGTH ? imageToSend : undefined
+    setMessages(prev => [...prev, { role: 'user', text: displayText, imageDataUrl: imageForMessage }])
     chatLogToTerminal('user', { text: displayText })
-    if (attachedImage) onClearAttached?.()
+    clearAttachedImage()
     setLoading(true)
     setError(null)
+    const imageToSendThisTurn = imageToSend
     try {
       if (!hasApiKey) {
         setMessages(prev => [...prev, { role: 'agent', text: '請喺 .env 設定 VITE_GEMINI_API_KEY 後先可以用 AI。' }])
@@ -155,12 +204,12 @@ export function ChatPanel({
           modelApiId: apiId,
           messages: history,
           userMessage: text || '請睇呢張圖並回覆。',
-          agentContext: { ...agentContext, imageUrl: attachedImage ?? undefined },
+          agentContext: { ...agentContext, imageUrl: imageToSendThisTurn ?? undefined },
           onToolAction,
           onLog: (line) => {
             setLiveAgentRun(prev => prev ? { logs: [...prev.logs, line] } : null)
           },
-          attachedImage: attachedImage ?? undefined,
+          attachedImage: imageToSendThisTurn ?? undefined,
         })
         setLiveAgentRun(null)
         chatLogToTerminal('agent', {
@@ -179,7 +228,7 @@ export function ChatPanel({
           },
         }])
       } else {
-        const reply = await callGeminiAsk(apiKey!, apiId, history, text || '請睇呢張圖。', attachedImage)
+        const reply = await callGeminiAsk(apiKey!, apiId, history, text || '請睇呢張圖。', imageToSendThisTurn)
         chatLogToTerminal('agent', { text: reply })
         setMessages(prev => [...prev, { role: 'agent', text: reply }])
       }
@@ -294,6 +343,11 @@ export function ChatPanel({
       <div className="ide-chat-messages">
         {messages.map((msg, i) => (
           <div key={i} className={`ide-chat-msg ${msg.role}`}>
+            {msg.role === 'user' && msg.imageDataUrl && (
+              <div className="ide-chat-msg-image-wrap">
+                <img src={msg.imageDataUrl} alt="Attached" className="ide-chat-msg-image" />
+              </div>
+            )}
             {msg.role === 'agent' && msg.agentRun && (msg.agentRun.logs.length > 0 || (msg.agentRun.toolCalls?.length ?? 0) > 0) && renderAgentRunBlock(msg.agentRun)}
             <div className={msg.agentRun ? 'ide-chat-agent-reply' : ''}>{msg.text}</div>
           </div>
@@ -313,54 +367,140 @@ export function ChatPanel({
         <div ref={messagesEndRef} />
       </div>
       <div className="ide-chat-input-wrap">
-        {attachedImage && (
+        {imageToSend && (
           <div className="ide-chat-attached">
-            <img src={attachedImage} alt="框選區域" className="ide-chat-attached-img" />
-            <button type="button" className="ide-chat-attached-remove" onClick={onClearAttached} title="移除">
+            <img src={imageToSend} alt="Attached" className="ide-chat-attached-img" />
+            <button type="button" className="ide-chat-attached-remove" onClick={clearAttachedImage} title="移除">
               ×
             </button>
           </div>
         )}
         <textarea
           className="ide-chat-input"
-          placeholder={attachedImage ? '可加文字再送俾 AI…' : (mode === 'agent' ? 'Plan, @ for context, / for commands' : '問我任何嘢…')}
+          placeholder={imageToSend ? '可加文字再送俾 AI…' : (mode === 'agent' ? 'Plan, @ for context, / for commands' : '問我任何嘢…')}
           value={input}
           onChange={e => setInput(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), send())}
+          onPaste={handlePaste}
           disabled={loading}
         />
-        <div className="ide-chatbar">
-          <select
-            className="ide-chatbar-select ide-chatbar-mode"
-            value={mode}
-            onChange={e => setMode(e.target.value as ChatMode)}
-            title="模式"
+        <div className="ide-chatbar" ref={chatbarRef}>
+          <div className="ide-chatbar-dropdown">
+            <button
+              type="button"
+              className={`ide-chatbar-pill ide-chatbar-mode ${mode === 'agent' ? 'ide-chatbar-pill--active' : ''}`}
+              onClick={() => setDropdownOpen(d => (d === 'mode' ? null : 'mode'))}
+              title="模式"
+              aria-expanded={dropdownOpen === 'mode'}
+              aria-haspopup="listbox"
+            >
+              {mode === 'agent' ? '∞ Agent' : 'Ask'}
+              <span className="ide-chatbar-chevron" aria-hidden>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M6 9l6 6 6-6" />
+                </svg>
+              </span>
+            </button>
+            {dropdownOpen === 'mode' && (
+              <ul className="ide-chatbar-dropdown-list ide-chatbar-dropdown-list--up" role="listbox">
+                {(['ask', 'agent'] as const).map((m) => (
+                  <li key={m} role="option" aria-selected={mode === m}>
+                    <button
+                      type="button"
+                      className={`ide-chatbar-dropdown-option ${mode === m ? 'ide-chatbar-dropdown-option--selected' : ''}`}
+                      onClick={() => { setMode(m); setDropdownOpen(null) }}
+                    >
+                      <span className="ide-chatbar-dropdown-icon" aria-hidden>
+                        {m === 'agent' ? '∞' : (
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                          </svg>
+                        )}
+                      </span>
+                      <span className="ide-chatbar-dropdown-label">{m === 'agent' ? 'Agent' : 'Ask'}</span>
+                      {m === 'ask' && <span className="ide-chatbar-dropdown-shortcut">Ctrl+L</span>}
+                      {m === 'agent' && <span className="ide-chatbar-dropdown-shortcut">Ctrl+I</span>}
+                      {mode === m && <span className="ide-chatbar-dropdown-check" aria-hidden>✓</span>}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div className="ide-chatbar-dropdown">
+            <button
+              type="button"
+              className="ide-chatbar-select ide-chatbar-model"
+              onClick={() => setDropdownOpen(d => (d === 'model' ? null : 'model'))}
+              title="AI 模型"
+              aria-expanded={dropdownOpen === 'model'}
+              aria-haspopup="listbox"
+            >
+              {MODELS.find(m => m.id === model)?.label ?? model}
+              <span className="ide-chatbar-chevron" aria-hidden>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M6 9l6 6 6-6" />
+                </svg>
+              </span>
+            </button>
+            {dropdownOpen === 'model' && (
+              <ul className="ide-chatbar-dropdown-list ide-chatbar-dropdown-list--up" role="listbox">
+                {MODELS.map((m) => (
+                  <li key={m.id} role="option" aria-selected={model === m.id}>
+                    <button
+                      type="button"
+                      className={`ide-chatbar-dropdown-option ${model === m.id ? 'ide-chatbar-dropdown-option--selected' : ''}`}
+                      onClick={() => { setModel(m.id); setDropdownOpen(null) }}
+                    >
+                      <span className="ide-chatbar-dropdown-label">{m.label}</span>
+                      {model === m.id && <span className="ide-chatbar-dropdown-check" aria-hidden>✓</span>}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="ide-chatbar-file-input"
+            aria-label="上傳圖片"
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              if (file) setImageFromFile(file)
+              e.target.value = ''
+            }}
+          />
+          <button
+            type="button"
+            className="ide-chatbar-btn ide-chatbar-btn--upload"
+            onClick={() => fileInputRef.current?.click()}
+            title="上傳圖片 / Upload image"
+            aria-label="上傳圖片"
           >
-            <option value="ask">Ask</option>
-            <option value="agent">∞ Agent</option>
-          </select>
-          <select
-            className="ide-chatbar-select ide-chatbar-model"
-            value={model}
-            onChange={e => setModel(e.target.value as GeminiModel)}
-            title="AI 模型"
-          >
-            {MODELS.map(m => (
-              <option key={m.id} value={m.id}>{m.label}</option>
-            ))}
-          </select>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+              <circle cx="8.5" cy="8.5" r="1.5" />
+              <polyline points="21 15 16 10 5 21" />
+            </svg>
+          </button>
           <button
             type="button"
             className="ide-chatbar-send"
             onClick={send}
             disabled={loading}
-            title={attachedImage ? '發送附圖' : '發送'}
+            title={imageToSend ? '發送附圖' : '發送'}
             aria-label="發送"
           >
             {loading ? (
               <span className="ide-chatbar-send-spinner" aria-hidden />
             ) : (
-              <span className="ide-chatbar-send-icon">→</span>
+              <svg className="ide-chatbar-send-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <path d="M12 19V5m0 0l-5 5m5-5l5 5" stroke="rgba(255,80,90,0.55)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" transform="translate(0.35, 0)" />
+                <path d="M12 19V5m0 0l-5 5m5-5l5 5" stroke="rgba(80,120,255,0.55)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" transform="translate(-0.35, 0)" />
+                <path d="M12 19V5m0 0l-5 5m5-5l5 5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
             )}
           </button>
         </div>
