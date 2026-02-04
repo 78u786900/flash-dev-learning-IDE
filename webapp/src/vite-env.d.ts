@@ -1,5 +1,15 @@
 /// <reference types="vite/client" />
 
+interface ImportMetaEnv {
+  readonly VITE_GEMINI_API_KEY: string
+  readonly VITE_GEMINI_DEFAULT_MODEL?: string
+  readonly VITE_API_URL?: string
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv
+}
+
 /** Optional: install mammoth for DOCX structure extraction */
 declare module 'mammoth' {
   export function extractRawText(options: { arrayBuffer: ArrayBuffer }): Promise<{ value: string }>

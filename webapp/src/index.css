@@ -2760,3 +2760,117 @@ body {
   border-style: solid;
   background: rgba(15, 23, 42, 0.9);
 }
+
+/* Login button and user info */
+.login-button-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 12px;
+}
+
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: var(--bg-tertiary);
+  border-radius: 16px;
+}
+
+.user-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.user-name {
+  font-size: 11px;
+  color: var(--text);
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.login-status {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.login-status.loading {
+  opacity: 0.7;
+}
+
+.btn-login {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.btn-login:hover {
+  background: var(--bg-hover);
+  border-color: var(--accent);
+}
+
+.btn-login svg {
+  flex-shrink: 0;
+}
+
+.btn-logout {
+  padding: 4px 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.btn-logout:hover {
+  background: rgba(220, 53, 69, 0.2);
+  color: #ff6b6b;
+  border-color: rgba(220, 53, 69, 0.5);
+}
+
+/* Cloud sync indicator */
+.cloud-sync-indicator {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--text-dim);
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--bg-tertiary);
+}
+
+.cloud-sync-indicator.syncing {
+  color: var(--accent);
+}
+
+.cloud-sync-indicator.synced {
+  color: #22c55e;
+}
+
+.cloud-sync-indicator.error {
+  color: #f43f5e;
+}
+
+/* Surface variable for consistency */
+:root {
+  --surface: var(--bg-tertiary);
+  --surface-hover: var(--bg-hover);
+  --danger: #f43f5e;
+  --danger-bg: rgba(244, 63, 94, 0.15);
+}

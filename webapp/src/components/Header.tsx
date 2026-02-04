@@ -1,3 +1,5 @@
+import { LoginButton } from './LoginButton'
+
 interface HeaderProps {
   onToggleLock: () => void
   onOpenCommand: () => void
@@ -31,8 +33,9 @@ export function Header({
         <span>Terminal</span>
         <span>Help</span>
       </nav>
-      <span className="ide-header-title">learning_IDE</span>
+      <span className="ide-header-title">flash.dev</span>
       <div className="ide-header-actions">
+        <LoginButton />
         <button
           type="button"
           className="ide-header-undo"

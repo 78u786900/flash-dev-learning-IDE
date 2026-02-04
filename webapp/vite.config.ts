@@ -44,6 +44,12 @@ export default defineConfig({
         changeOrigin: true,
         secure: true,
       },
+      // Proxy API requests to backend server during development
+      '/api': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+        secure: false,
+      },
     },
   },
 })

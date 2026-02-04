@@ -225,7 +225,7 @@ function App() {
   if (!safeNote) {
     return (
       <div className="ide-layout">
-        <Header onToggleLock={() => {}} onOpenCommand={() => setCommandOpen(true)} onOpenTimer={() => setTimerOpen(v => !v)} fullscreenLock={fullscreenLock} />
+        <Header onToggleLock={() => {}} onOpenCommand={() => setCommandOpen(true)} onOpenTimer={() => setTimerOpen(v => !v)} fullscreenLock={fullscreenLock} onUndo={() => {}} onRedo={() => {}} canUndo={false} canRedo={false} />
         <div className="ide-main" style={{ alignItems: 'center', justifyContent: 'center' }}>
           <p style={{ color: 'var(--text-dim)' }}>載入中…</p>
         </div>
