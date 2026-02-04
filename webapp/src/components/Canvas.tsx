@@ -496,10 +496,9 @@ export function Canvas({
                               // Fall back to key from Vite env; Canvas itself doesn't know the key directly.
                             }
                             if (!import.meta.env.VITE_GEMINI_API_KEY) {
-                              setInlineError('未設定 Gemini API key，請先在 .env 填寫 VITE_GEMINI_API_KEY。')
+                              console.error('未設定 Gemini API key，請先在 .env 填寫 VITE_GEMINI_API_KEY。')
                               return
                             }
-                            setInlineError(null)
                             setGeneratingCodeWindowId(cw.id)
                             generateCodeWindowSource({
                               apiKey: import.meta.env.VITE_GEMINI_API_KEY as string,
@@ -519,7 +518,7 @@ export function Canvas({
                               })
                               .catch((err) => {
                                 const msg = err instanceof Error ? err.message : '生成代碼失敗，請稍後再試。'
-                                setInlineError(msg)
+                                console.error(msg)
                               })
                               .finally(() => {
                                 setGeneratingCodeWindowId((current) => (current === cw.id ? null : current))
