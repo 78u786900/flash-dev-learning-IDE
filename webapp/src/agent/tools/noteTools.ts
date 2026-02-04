@@ -341,3 +341,104 @@ Output the complete PlantUML source now:`
     action,
   }
 }
+
+/** create_code_window: 為某個 section 建立一個 code render window（HTML / React）。 */
+export async function run_create_code_window(
+  params: { note_id?: string; section_index: string; language: 'html' | 'react'; title?: string; instructions: string },
+  ctx: AgentContext,
+  callGemini: CallGeminiFn
+): Promise<ToolResult> {
+  const note = getNote(ctx, params.note_id)
+  if (!note) return { success: false, error: '搵唔到筆記。請指定 note_id 或打開要加 code window 嘅筆記。' }
+
+  // section_index 可以超出範圍；為咗 user 體驗，直接 clamp 去最後一個已存在嘅 section
+  const rawIndex = params.section_index?.trim()
+  let idx = parseInt(rawIndex || `${note.sections.length || 1}`, 10)
+  if (Number.isNaN(idx) || idx < 1) idx = 1
+  if (idx > note.sections.length) idx = note.sections.length
+  if (note.sections.length === 0) {
+    return { success: false, error: '呢份筆記暫時冇任何 section，請先加至少一個章節再建立 code window。' }
+  }
+  const section = note.sections[idx - 1]
+  if (!section) return { success: false, error: '無效嘅 section。' }
+
+  const language = (params.language ?? 'html').trim().toLowerCase() === 'react' ? 'react' : 'html'
+  const baseTitle = (params.title ?? '').trim()
+  const title =
+    baseTitle ||
+    (language === 'react' ? `React code window：${section.title}` : `HTML code window：${section.title}`)
+
+  const instructions = (params.instructions ?? '').trim()
+  if (!instructions) {
+    return { success: false, error: '請提供 instructions（描述要整咩動畫 / mini game / 互動效果）。' }
+  }
+
+  const sectionContext = section.content?.trim()
+    ? `此 code window 會掛喺以下筆記 section 之下（可以用作示範，唔需要重複文字）：\n\n${section.content}\n\n`
+    : ''
+
+  if (language === 'html') {
+    const prompt = `你係一個前端工程師，要為學習筆記建立一個 **單一 HTML 檔**，用嚟示範：${instructions}。
+
+要求：
+- 請輸出「完整 HTML 檔」，包括 <!doctype html>、<html>、<head>、<body>。
+- 可以使用 CSS 和 JavaScript（inline 或 <style>/<script>），亦可以載入少量前端 library（例如 Three.js、GSAP），**但一定要用 <script src="..."></script> CDN 方式**，唔好用 import / require / bundler。
+- 例如想用 Three.js，可以：
+-   <script src="https://unpkg.com/three@0.161.0/build/three.min.js"></script>
+-   然後用全域變數 THREE 建立場景（scene、camera、renderer）。
+- 如果你只需要簡單動畫，可以直接用 <svg>、CSS animation、requestAnimationFrame 等。
+- 重點係：code 要短小清晰，適合教學示範，唔好引入太多無關內容。
+- **只輸出 HTML 代碼本身**，唔好加說明文字、唔好用 markdown、唔好加 \`\`\` 標記。
+
+${sectionContext}請立即輸出完整 HTML 檔：`
+    const code = await callGemini(prompt, 'Output ONLY the HTML source code, no markdown, no commentary.')
+    const action: ToolResultAction = {
+      type: 'upsert_code_window',
+      noteId: note.id,
+      sectionId: section.id,
+      language: 'html',
+      title,
+      source: code,
+    }
+    return {
+      success: true,
+      text: `已根據指示為「${note.name}」第 ${idx} 節建立一個 HTML code window：「${title}」。`,
+      action,
+    }
+  }
+
+  // React / JSX 模式
+  const promptReact = `你係一個 React 工程師，要為學習筆記建立一個 **單一 React/JSX 檔**，用嚟示範：${instructions}。
+
+執行環境（已由宿主 HTML 提供）：
+- 使用 React 18 UMD 版本（全域變數 React）。
+- 使用 ReactDOM 18 UMD 版本（全域變數 ReactDOM），已載入 react-dom/client。
+- HTML 入面只有一個 <div id="root"></div> 供你掛載。
+- 你的代碼會被放入 <script type="text/babel"> ... </script> 內，由 Babel Standalone 編譯 JSX。
+
+要求：
+- 請寫一個或多個 React component（例如 App），然後呼叫：
+  const rootEl = document.getElementById("root");
+  const root = ReactDOM.createRoot(rootEl);
+  root.render(<App />);
+- 可以使用 React hook（useState/useEffect 等）。
+- 可以用簡單 CSS inline style 或 <style>。
+- 重點係：代碼要短小清晰，適合教學示範，唔好引入多餘結構。
+- **只輸出 JavaScript/JSX 代碼本身**（包括 ReactDOM.createRoot(...)），唔好加說明文字、唔好用 markdown、唔好加 \`\`\` 標記。
+
+${sectionContext}請立即輸出完整 React/JSX 檔內容：`
+  const code = await callGemini(promptReact, 'Output ONLY the React/JSX source code, no markdown, no commentary.')
+  const action: ToolResultAction = {
+    type: 'upsert_code_window',
+    noteId: note.id,
+    sectionId: section.id,
+    language: 'react',
+    title,
+    source: code,
+  }
+  return {
+    success: true,
+    text: `已根據指示為「${note.name}」第 ${idx} 節建立一個 React code window：「${title}」。`,
+    action,
+  }
+}

@@ -185,6 +185,30 @@ export const AGENT_TOOL_DEFINITIONS: GeminiFunctionDeclaration[] = [
       required: ['section_indices'],
     },
   },
+  {
+    name: 'create_code_window',
+    description:
+      '為當前或指定筆記 section 建立一個 code render window（HTML 或 React），用於簡單動畫（SVG、CSS、GSAP、Three.js）或者細型 React mini game / 互動元件。用戶可以講「幫我喺第二節整一個 SVG 動畫示範」或者「喺呢節加一個 React mini game」。',
+    parameters: {
+      type: 'object',
+      properties: {
+        note_id: { type: 'string', description: '筆記 id（可選；唔傳則用當前筆記）' },
+        section_index: { type: 'string', description: '要掛載 code window 嘅 section 序號（1-based），例如 "2" 即第二節' },
+        language: {
+          type: 'string',
+          description: '渲染模式：html = 單一 HTML 檔（可含 CSS/JS），react = 單一 React/JSX 檔（使用 React 18 + ReactDOM.createRoot）。',
+          enum: ['html', 'react'],
+        },
+        title: { type: 'string', description: '顯示用標題（可選，例如「SVG 動畫」、「Mini game」）' },
+        instructions: {
+          type: 'string',
+          description:
+            '用自然語言描述要整嘅效果，例如「一個簡單 bouncing ball 動畫」「一個可以答選擇題嘅 React mini game」。模型會根據呢個說明產生 code。',
+        },
+      },
+      required: ['section_index', 'language', 'instructions'],
+    },
+  },
   // —— PDF tools ——
   {
     name: 'summarize_page',

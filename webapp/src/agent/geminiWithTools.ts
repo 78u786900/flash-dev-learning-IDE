@@ -121,7 +121,13 @@ NOTES – LaTeX only, valid commands and spacing:
 
 DIAGRAMS – choose LaTeX vs PlantUML by diagram kind:
 - Commutative diagrams / abstract algebra (exact sequences, morphisms, category theory, pullbacks, quotient maps, short exact sequence, etc.): use LaTeX in note content. Write \\begin{CD} ... \\end{CD} (with or without $$ or \\[ \\] around it). Only horizontal (@>>> @<<< @>label>>) and vertical (@VVV @AAA @VlabelV @AlabelA) arrows; no diagonals. Any arrow label that contains brackets or subscripts (e.g. coordinate map [-]_B) MUST be wrapped in braces: use @V{[-]_B}VV and @V{[-]_{B'}}VV, never @V[-]BVV (unbraced [ ] breaks KaTeX). Use verbal_to_structured or update_section. Do NOT use generate_plantuml_diagram for these.
-- All other diagrams (flowchart, use case, sequence, ER, class, activity, state, Gantt, mind map, component, deployment, user journey, etc.): use generate_plantuml_diagram. Choose diagram_type to match: sequence, usecase, class, activity, state, er, mindmap, gantt, wbs, component, deployment, etc.`
+- All other diagrams (flowchart, use case, sequence, ER, class, activity, state, Gantt, mind map, component, deployment, user journey, etc.): use generate_plantuml_diagram. Choose diagram_type to match: sequence, usecase, class, activity, state, er, mindmap, gantt, wbs, component, deployment, etc.
+
+CODE RENDER WINDOWS – HTML / React mini demos:
+- When the user asks for a small interactive demo attached to a section (e.g. "SVG animation", "simple mini game", "React interactive example"), use create_code_window(note_id?, section_index, language, title?, instructions).
+- language="html": generate a single complete HTML file (you may use inline CSS/JS, SVG, CSS animations, canvas, requestAnimationFrame; do NOT assume bundlers or NPM packages). The tool will attach this as an HTML code window rendered inside an iframe.
+- language="react": generate a single React/JSX file that will run in a browser with React 18 + ReactDOM.createRoot available as global variables, and a <div id="root"></div> in the host page. ALWAYS include the ReactDOM.createRoot(...).render(<App />) bootstrap code at the end.
+- Keep examples small, focused, and safe for students: no network calls, no external services, no ads/trackers; just pure client-side demo code.`
 
 /** Map tool name to layer (macro) and skill label for logs */
 const TOOL_LAYER_SKILL: Record<string, { layer: string; skill: string }> = {
@@ -140,6 +146,7 @@ const TOOL_LAYER_SKILL: Record<string, { layer: string; skill: string }> = {
   rename_note: { layer: 'EDIT_NOTES', skill: 'rename_note' },
   delete_note: { layer: 'EDIT_NOTES', skill: 'delete_note' },
   delete_section: { layer: 'EDIT_NOTES', skill: 'delete_section' },
+   create_code_window: { layer: 'EDIT_NOTES', skill: 'create_code_window' },
   summarize_page: { layer: 'READ_FILES', skill: 'summarize_page' },
   page_to_note: { layer: 'EDIT_NOTES', skill: 'page_to_note' },
   generate_qa_from_page: { layer: 'READ_FILES', skill: 'generate_qa_from_page' },

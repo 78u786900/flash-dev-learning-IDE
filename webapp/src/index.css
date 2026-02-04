@@ -2376,3 +2376,207 @@ body {
 .ide-sidebar-add input::placeholder {
   color: var(--text-dim);
 }
+
+/* Code render windows (HTML / React) attached to note sections */
+.ide-section-codewindows {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.ide-section-codewindows-label {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.ide-section-codewindows-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.ide-code-window-card {
+  border-radius: 8px;
+  background: transparent;
+  border: none;
+  padding: 8px 0 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 360px;
+}
+
+.ide-code-window-card-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ide-code-window-title {
+  flex: 1;
+  min-width: 0;
+  border-radius: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  padding: 3px 6px;
+}
+
+.ide-code-window-language-select {
+  border-radius: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 11px;
+  padding: 3px 6px;
+}
+
+.ide-code-window-delete {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.7);
+  background: transparent;
+  color: rgba(248, 113, 113, 0.9);
+  font-size: 12px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.ide-code-window-delete:hover {
+  background: rgba(248, 113, 113, 0.15);
+}
+
+.ide-code-window-edit-wrap {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: stretch;
+}
+
+.ide-code-window-editor {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid rgba(30, 64, 175, 0.9);
+  background: radial-gradient(circle at top left, #111827, #020617);
+  color: #e5e7eb;
+  resize: vertical;
+  min-height: 120px;
+  box-shadow:
+    inset 0 0 0 1px rgba(15, 23, 42, 0.9),
+    0 0 0 1px rgba(15, 23, 42, 0.9),
+    0 18px 45px rgba(0, 0, 0, 0.85);
+  caret-color: #38bdf8;
+  tab-size: 2;
+  outline: none;
+  transition:
+    border-color 120ms ease-out,
+    box-shadow 120ms ease-out,
+    background 160ms ease-out;
+}
+
+.ide-code-window-editor::placeholder {
+  color: rgba(148, 163, 184, 0.8);
+}
+
+.ide-code-window--editing .ide-code-window-editor {
+  border-color: #38bdf8;
+  box-shadow:
+    inset 0 0 0 1px rgba(15, 23, 42, 0.9),
+    0 0 0 1px rgba(56, 189, 248, 0.9),
+    0 24px 60px rgba(15, 23, 42, 0.95);
+}
+
+.ide-code-window {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 120px;
+}
+
+.ide-code-window-surface {
+  cursor: pointer;
+}
+
+.ide-code-window--editing .ide-code-window-surface {
+  cursor: text;
+}
+
+.ide-code-window-header {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: rgba(148, 163, 184, 0.9);
+  margin-bottom: 4px;
+}
+
+.ide-code-window-language {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace);
+  opacity: 0.9;
+}
+
+.ide-code-window-toggle {
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.8);
+  background: rgba(15, 23, 42, 0.9);
+  color: rgba(226, 232, 240, 0.9);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+
+.ide-code-window-toggle:hover {
+  border-color: #38bdf8;
+  color: #e0f2fe;
+}
+
+.ide-code-window-frame-wrap {
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid rgba(15, 23, 42, 0.9);
+  background: radial-gradient(circle at top, #020617, #020617);
+}
+
+.ide-code-window-iframe {
+  width: 100%;
+  border: none;
+  background: transparent;
+  display: block;
+}
+
+.ide-section-codewindows-actions {
+  margin-top: 6px;
+}
+
+.ide-code-window-add {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px dashed rgba(148, 163, 184, 0.7);
+  background: transparent;
+  color: rgba(148, 163, 184, 0.95);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ide-code-window-add:hover {
+  border-style: solid;
+  background: rgba(15, 23, 42, 0.9);
+}

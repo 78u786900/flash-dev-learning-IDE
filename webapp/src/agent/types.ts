@@ -1,4 +1,4 @@
-import type { Note, DroppedFile } from '../types'
+import type { Note, DroppedFile, CodeWindowLanguage } from '../types'
 
 /** Context passed to the agent (current note, file, selection, etc.) */
 export interface AgentContext {
@@ -59,6 +59,8 @@ export type ToolResultAction =
   | { type: 'rename_note'; noteId: string; name: string }
   | { type: 'delete_note'; noteId: string }
   | { type: 'delete_section'; noteId: string; sectionIds: string[] }
+  /** Upsert (create) a code render window attached to a specific section (HTML / React snippet). */
+  | { type: 'upsert_code_window'; noteId: string; sectionId: string; language: CodeWindowLanguage; title?: string; source: string }
 
 /** Gemini function declaration shape */
 export interface GeminiFunctionDeclaration {

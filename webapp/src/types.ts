@@ -20,6 +20,18 @@ export interface SectionRecording {
   transcriptError?: string
 }
 
+export type CodeWindowLanguage = 'html' | 'react'
+
+export interface SectionCodeWindow {
+  id: string
+  /** Optional short label shown in the UI (e.g. \"SVG animation\", \"Mini game\"). */
+  title?: string
+  /** Render mode: plain HTML snippet or React (JSX) snippet compiled in an isolated iframe. */
+  language: CodeWindowLanguage
+  /** Source code for this window. For HTML, this is the full snippet; for React, user code will run inside a template that mounts to #root. */
+  source: string
+}
+
 export interface Section {
   id: string
   title: string
@@ -27,6 +39,8 @@ export interface Section {
   done: boolean
   /** Optional voice recordings for this section (multiple allowed). */
   recordings?: SectionRecording[]
+  /** Optional code render windows attached to this section (HTML / React snippets rendered in an isolated iframe). */
+  codeWindows?: SectionCodeWindow[]
 }
 
 export interface Note {

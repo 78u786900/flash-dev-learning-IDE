@@ -39,6 +39,7 @@ const RUNNERS: Record<string, ToolRunner> = {
   rename_note: noteTools.run_rename_note as ToolRunner,
   delete_note: noteTools.run_delete_note as ToolRunner,
   delete_section: noteTools.run_delete_section as ToolRunner,
+  create_code_window: noteTools.run_create_code_window as ToolRunner,
   summarize_page: pdfTools.run_summarize_page as ToolRunner,
   page_to_note: pdfTools.run_page_to_note as ToolRunner,
   generate_qa_from_page: pdfTools.run_generate_qa_from_page as ToolRunner,

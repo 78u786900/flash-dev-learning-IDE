@@ -601,6 +601,23 @@ function App() {
       deleteNote(action.noteId)
     } else if (action.type === 'delete_section') {
       deleteSection(action.noteId, action.sectionIds)
+    } else if (action.type === 'upsert_code_window') {
+      updateSection(action.noteId, action.sectionId, (s) => {
+        const existing = s.codeWindows ?? []
+        const id = `code-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        return {
+          ...s,
+          codeWindows: [
+            ...existing,
+            {
+              id,
+              language: action.language,
+              title: action.title,
+              source: action.source,
+            },
+          ],
+        }
+      })
     }
   }, [addSectionWithContent, updateSection, reorderSections, renameNote, deleteNote, deleteSection])
 

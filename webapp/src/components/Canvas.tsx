@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import type { Note, Section, SectionRecording } from '../types'
+import type { Note, Section, SectionRecording, SectionCodeWindow } from '../types'
 import { NoteContentWithLatex } from './NoteContentWithLatex'
 import { transcribeWithGeminiFlash } from '../utils/audioTranscription'
+import { CodeRenderWindow } from './CodeRenderWindow'
 
 /** Convert data URL to Blob so we can use createObjectURL for reliable playback (data URLs often fail with WebM in audio elements). */
 function dataUrlToBlob(dataUrl: string): Blob | null {
@@ -402,6 +403,75 @@ export function Canvas({ note, onUpdateSection, onAddSection, onSectionDone, onR
               </div>
             </div>
           )}
+          {section.codeWindows && section.codeWindows.length > 0 && (
+            <div className="ide-section-codewindows">
+              <span className="ide-section-codewindows-label">Code render windows</span>
+              <div className="ide-section-codewindows-list">
+                {section.codeWindows.map((cw) => (
+                  <div key={cw.id} className="ide-code-window-card">
+                    <div className="ide-code-window-card-header">
+                      <input
+                        type="text"
+                        className="ide-code-window-title"
+                        value={cw.title ?? ''}
+                        placeholder="標題（可選，例如：SVG 動畫、Mini game）"
+                        onChange={(e) => {
+                          const value = e.target.value
+                          onUpdateSection(section.id, (s) => ({
+                            ...s,
+                            codeWindows: (s.codeWindows ?? []).map((w) =>
+                              w.id === cw.id ? { ...w, title: value || undefined } : w
+                            ),
+                          }))
+                        }}
+                      />
+                      <select
+                        className="ide-code-window-language-select"
+                        value={cw.language}
+                        onChange={(e) => {
+                          const lang = e.target.value as SectionCodeWindow['language']
+                          onUpdateSection(section.id, (s) => ({
+                            ...s,
+                            codeWindows: (s.codeWindows ?? []).map((w) =>
+                              w.id === cw.id ? { ...w, language: lang } : w
+                            ),
+                          }))
+                        }}
+                      >
+                        <option value="html">HTML</option>
+                        <option value="react">React (JSX)</option>
+                      </select>
+                      <button
+                        type="button"
+                        className="ide-code-window-delete"
+                        onClick={() => {
+                          onUpdateSection(section.id, (s) => ({
+                            ...s,
+                            codeWindows: (s.codeWindows ?? []).filter((w) => w.id !== cw.id),
+                          }))
+                        }}
+                        title="刪除此 code window"
+                        aria-label="刪除此 code window"
+                      >
+                        ×
+                      </button>
+                    </div>
+                    <CodeRenderWindow
+                      windowDef={cw}
+                      onChangeSource={(value) => {
+                        onUpdateSection(section.id, (s) => ({
+                          ...s,
+                          codeWindows: (s.codeWindows ?? []).map((w) =>
+                            w.id === cw.id ? { ...w, source: value } : w
+                          ),
+                        }))
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           {editingSectionId === section.id ? (
             <div
               ref={editRef}
@@ -435,6 +505,27 @@ export function Canvas({ note, onUpdateSection, onAddSection, onSectionDone, onR
               <NoteContentWithLatex content={section.content || ''} />
             </div>
           )}
+          <div className="ide-section-codewindows-actions">
+            <button
+              type="button"
+              className="ide-code-window-add"
+              onClick={() => {
+                const id = `code-${Date.now()}-${Math.random().toString(36).slice(2)}`
+                const initial: SectionCodeWindow = {
+                  id,
+                  language: 'html',
+                  title: '新 Code Window',
+                  source: '<!-- 在此輸入 HTML / CSS / JS 小實驗，例如 SVG 或簡單動畫。-->',
+                }
+                onUpdateSection(section.id, (s) => ({
+                  ...s,
+                  codeWindows: [...(s.codeWindows ?? []), initial],
+                }))
+              }}
+            >
+              + 新增 Code Render Window
+            </button>
+          </div>
         </section>
       ))}
       <button type="button" className="ide-add-section" onClick={onAddSection}>
