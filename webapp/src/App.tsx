@@ -150,10 +150,49 @@ function App() {
       return cast
     }
   )
+  const [history, setHistory] = useState<Array<{ notes: Note[]; files: DroppedFile[] }>>([])
+  const [future, setFuture] = useState<Array<{ notes: Note[]; files: DroppedFile[] }>>([])
 
   const logAction = useCallback((type: TimelineAction['type'], label: string) => {
     setTimeline(prev => [...prev.slice(-99), makeTimelineAction(type, label)])
   }, [])
+
+  const snapshotState = useCallback(() => {
+    return {
+      notes: JSON.parse(JSON.stringify(notes)) as Note[],
+      files: JSON.parse(JSON.stringify(files)) as DroppedFile[],
+    }
+  }, [notes, files])
+
+  const pushHistory = useCallback(() => {
+    setHistory(prev => [...prev, snapshotState()])
+    setFuture([])
+  }, [snapshotState])
+
+  const canUndo = history.length > 0
+  const canRedo = future.length > 0
+
+  const handleUndo = useCallback(() => {
+    setHistory(prev => {
+      if (!prev.length) return prev
+      const last = prev[prev.length - 1]
+      setFuture(f => [...f, snapshotState()])
+      setNotes(last.notes)
+      setFiles(last.files)
+      return prev.slice(0, -1)
+    })
+  }, [snapshotState])
+
+  const handleRedo = useCallback(() => {
+    setFuture(prev => {
+      if (!prev.length) return prev
+      const last = prev[prev.length - 1]
+      setHistory(h => [...h, snapshotState()])
+      setNotes(last.notes)
+      setFiles(last.files)
+      return prev.slice(0, -1)
+    })
+  }, [snapshotState])
 
   const onReadingPosition = useCallback(
     (payload: { fileName: string; page: number }) => {
@@ -195,8 +234,9 @@ function App() {
   }
 
   const updateNote = useCallback((noteId: string, updater: (n: Note) => Note) => {
+    pushHistory()
     setNotes(prev => prev.map(n => n.id === noteId ? updater(n) : n))
-  }, [])
+  }, [pushHistory])
 
   const updateSection = useCallback((noteId: string, sectionId: string, updater: (s: Section) => Section) => {
     updateNote(noteId, n => ({
@@ -206,6 +246,7 @@ function App() {
   }, [updateNote])
 
   const addSection = useCallback((noteId: string) => {
+    pushHistory()
     updateNote(noteId, n => ({
       ...n,
       sections: [
@@ -214,9 +255,10 @@ function App() {
       ],
     }))
     logAction('added_section', '加咗新章節')
-  }, [updateNote, logAction])
+  }, [updateNote, logAction, pushHistory])
 
   const addSectionWithContent = useCallback((noteId: string, title: string, content: string) => {
+    pushHistory()
     updateNote(noteId, n => ({
       ...n,
       sections: [
@@ -225,9 +267,10 @@ function App() {
       ],
     }))
     logAction('added_section', `加咗章節「${title}」`)
-  }, [updateNote, logAction])
+  }, [updateNote, logAction, pushHistory])
 
   const addNote = useCallback((name: string) => {
+    pushHistory()
     const newNote: Note = {
       id: `n${Date.now()}`,
       name: name || '未命名筆記',
@@ -238,9 +281,10 @@ function App() {
     setActiveNoteId(newNote.id)
     setActiveFileId(null)
     logAction('created_note', `建立筆記「${newNote.name}」`)
-  }, [logAction])
+  }, [logAction, pushHistory])
 
   const reorderSections = useCallback((noteId: string, sectionIds: string[]) => {
+    pushHistory()
     setNotes(prev =>
       prev.map(n => {
         if (n.id !== noteId) return n
@@ -251,14 +295,16 @@ function App() {
       })
     )
     logAction('section_edited', '已調整章節順序')
-  }, [logAction])
+  }, [logAction, pushHistory])
 
   const renameNote = useCallback((noteId: string, name: string) => {
+    pushHistory()
     setNotes(prev => prev.map(n => (n.id === noteId ? { ...n, name: name || '未命名筆記' } : n)))
     logAction('section_edited', `筆記改名為「${name || '未命名筆記'}」`)
-  }, [logAction])
+  }, [logAction, pushHistory])
 
   const deleteNote = useCallback((noteId: string) => {
+    pushHistory()
     setNotes(prev => {
       const next = prev.filter(n => n.id !== noteId)
       if (next.length === 0) {
@@ -272,9 +318,10 @@ function App() {
       return next
     })
     logAction('section_edited', '已刪除筆記')
-  }, [activeNoteId])
+  }, [activeNoteId, pushHistory])
 
   const deleteSection = useCallback((noteId: string, sectionIds: string[]) => {
+    pushHistory()
     setNotes(prev =>
       prev.map(n => {
         if (n.id !== noteId) return n
@@ -284,10 +331,11 @@ function App() {
       })
     )
     logAction('section_edited', `已刪除 ${sectionIds.length} 個章節`)
-  }, [logAction])
+  }, [logAction, pushHistory])
 
   /** Create a new note, switch to it, and return the full Note. Used by agent create_note tool so sections can be added in the same run (context.lastCreatedNote). */
   const createNoteAndReturnId = useCallback((name: string): Note => {
+    pushHistory()
     const newNote: Note = {
       id: `n${Date.now()}`,
       name: name || '未命名筆記',
@@ -299,7 +347,7 @@ function App() {
     setActiveFileId(null)
     logAction('created_note', `建立筆記「${newNote.name}」`)
     return newNote
-  }, [logAction])
+  }, [logAction, pushHistory])
 
   /** Load persisted files from IndexedDB on mount */
   useEffect(() => {
@@ -364,6 +412,7 @@ function App() {
   }, [])
 
   const performDeleteFile = useCallback((id: string) => {
+    pushHistory()
     const file = files.find(f => f.id === id)
     if (file) URL.revokeObjectURL(file.url)
     deleteFileFromStorage(id)
@@ -374,7 +423,7 @@ function App() {
         logAction('section_edited', '已刪除檔案')
       })
       .catch((err) => console.error('Delete file failed', err))
-  }, [files])
+  }, [files, pushHistory])
 
   const requestDeleteChat = useCallback((id: string) => {
     setConfirmDialog({ open: true, type: 'deleteChat', chatId: id })
@@ -612,6 +661,7 @@ function App() {
     } else if (action.type === 'delete_section') {
       deleteSection(action.noteId, action.sectionIds)
     } else if (action.type === 'upsert_code_window') {
+      pushHistory()
       updateSection(action.noteId, action.sectionId, (s) => {
         const existing = s.codeWindows ?? []
         const id = `code-${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -640,6 +690,10 @@ function App() {
         onOpenCommand={() => setCommandOpen(true)}
         onOpenTimer={() => setTimerOpen(v => !v)}
         fullscreenLock={fullscreenLock}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
+        canUndo={canUndo}
+        canRedo={canRedo}
       />
       <div className="ide-main">
         <Sidebar
