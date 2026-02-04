@@ -9,7 +9,9 @@ const SCOPES = [
 export function createOAuth2Client() {
   const clientId = process.env.GOOGLE_CLIENT_ID
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET
-  const redirectUri = `${process.env.FRONTEND_URL?.replace(/\/$/, '')}/api/auth/callback` || 'http://localhost:5173/api/auth/callback'
+  // Google must redirect to the BACKEND (where /api/auth/callback is handled), not the frontend.
+  const base = process.env.BACKEND_PUBLIC_URL || process.env.FRONTEND_URL
+  const redirectUri = base ? `${base.replace(/\/$/, '')}/api/auth/callback` : 'http://localhost:3001/api/auth/callback'
 
   if (!clientId || !clientSecret) {
     throw new Error('Missing GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET in environment variables')
