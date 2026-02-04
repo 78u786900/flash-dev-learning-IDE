@@ -80,7 +80,13 @@ export class GoogleDriveService {
         alt: 'media'
       })
 
-      return response.data as StorageData
+      const raw = response.data
+      if (raw === undefined || raw === null) return null
+      if (typeof raw === 'object' && !Buffer.isBuffer(raw) && !Array.isArray(raw)) {
+        return raw as StorageData
+      }
+      const str = typeof raw === 'string' ? raw : (Buffer.isBuffer(raw) ? raw.toString('utf8') : String(raw))
+      return JSON.parse(str) as StorageData
     } catch (error: any) {
       if (error.code === 404) return null
       throw error

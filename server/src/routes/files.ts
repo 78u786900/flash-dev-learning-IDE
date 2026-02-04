@@ -117,7 +117,7 @@ filesRouter.post('/', upload.single('file'), async (req: AuthenticatedRequest, r
 
 /**
  * GET /api/files/:id
- * Download a file from Google Drive
+ * Download a file from Google Drive (id can be app file id or Drive file id)
  */
 filesRouter.get('/:id', async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -128,15 +128,17 @@ filesRouter.get('/:id', async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params
     const driveService = createDriveService(req.accessToken)
     
-    // Get storage data to find driveFileId
+    let driveFileId: string | null = null
     const storageData = await driveService.loadStorageData()
     const meta = storageData?.fileMetadata.find(m => m.id === id || m.driveFileId === id)
-    
-    if (!meta?.driveFileId) {
-      return res.status(404).json({ error: 'File not found' })
+    if (meta?.driveFileId) {
+      driveFileId = meta.driveFileId
+    } else {
+      // Id may be a Drive file id (e.g. file listed without metadata)
+      driveFileId = id
     }
     
-    const { data, mimeType, name } = await driveService.downloadFile(meta.driveFileId)
+    const { data, mimeType, name } = await driveService.downloadFile(driveFileId)
     
     res.setHeader('Content-Type', mimeType)
     res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(name)}"`)
@@ -152,7 +154,7 @@ filesRouter.get('/:id', async (req: AuthenticatedRequest, res: Response) => {
 
 /**
  * GET /api/files/:id/url
- * Get a shareable URL for a file
+ * Get a shareable URL for a file (id can be app file id or Drive file id)
  */
 filesRouter.get('/:id/url', async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -163,15 +165,16 @@ filesRouter.get('/:id/url', async (req: AuthenticatedRequest, res: Response) => 
     const { id } = req.params
     const driveService = createDriveService(req.accessToken)
     
-    // Get storage data to find driveFileId
+    let driveFileId: string | null = null
     const storageData = await driveService.loadStorageData()
     const meta = storageData?.fileMetadata.find(m => m.id === id || m.driveFileId === id)
-    
-    if (!meta?.driveFileId) {
-      return res.status(404).json({ error: 'File not found' })
+    if (meta?.driveFileId) {
+      driveFileId = meta.driveFileId
+    } else {
+      driveFileId = id
     }
     
-    const url = await driveService.getFileUrl(meta.driveFileId)
+    const url = await driveService.getFileUrl(driveFileId)
     res.json({ url })
   } catch (error: any) {
     console.error('Get file URL error:', error)

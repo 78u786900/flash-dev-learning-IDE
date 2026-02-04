@@ -15,23 +15,27 @@ import { CommandPalette } from './components/CommandPalette'
 import { GrindingTimer } from './components/GrindingTimer'
 import { ConfirmDialog } from './components/ConfirmDialog'
 import {
-  loadNotes,
-  saveNotes,
-  loadTimeline,
-  saveTimeline,
-  loadChatThreads,
-  saveChatThreads,
-  loadCanvasOverlays,
-  saveCanvasOverlays,
+  loadNotes as loadNotesSync,
+  loadTimeline as loadTimelineSync,
+  loadChatThreads as loadChatThreadsSync,
+  loadCanvasOverlays as loadCanvasOverlaysSync,
   type StoredChatMessage,
   type StoredChatThread,
 } from './storage/persistence'
 import {
-  loadFilesFromStorage,
-  saveFileToStorage,
-  renameFileInStorage,
-  deleteFileFromStorage,
-} from './storage/fileStorage'
+  loadAllFromCloud,
+  saveNotes,
+  saveTimeline,
+  saveChatThreads,
+  saveCanvasOverlays,
+  loadFiles,
+  uploadFile as uploadFileToCloud,
+  renameFile as renameFileInCloud,
+  deleteFile as deleteFileFromCloud,
+  type CloudFile,
+} from './storage/cloudStorage'
+import { useAuth } from './contexts/AuthContext'
+import { filesApi } from './api/client'
 
 const defaultNote: Note = {
   id: '1',
@@ -65,7 +69,7 @@ const DEFAULT_CHAT_WELCOME: StoredChatMessage = {
 }
 
 function makeInitialChatThreads(): StoredChatThread[] {
-  const loaded = loadChatThreads()
+  const loaded = loadChatThreadsSync()
   if (loaded.length) return loaded
   const now = Date.now()
   return [
@@ -90,15 +94,16 @@ function getInitialChatState(): { threads: StoredChatThread[]; activeId: string 
 }
 
 function App() {
-  const [notes, setNotes] = useState<Note[]>(() => loadNotes() ?? [defaultNote])
+  const { isAuthenticated } = useAuth()
+  const [notes, setNotes] = useState<Note[]>(() => loadNotesSync() ?? [defaultNote])
   const [files, setFiles] = useState<DroppedFile[]>([])
   const [activeNoteId, setActiveNoteId] = useState<string | null>(() => {
-    const loaded = loadNotes()
+    const loaded = loadNotesSync()
     if (loaded?.length) return loaded[0].id
     return defaultNote.id
   })
   const [activeFileId, setActiveFileId] = useState<string | null>(null)
-  const [timeline, setTimeline] = useState<TimelineAction[]>(() => loadTimeline())
+  const [timeline, setTimeline] = useState<TimelineAction[]>(() => loadTimelineSync())
   const [chatThreads, setChatThreads] = useState<StoredChatThread[]>(() => getInitialChatState().threads)
   const [activeChatId, setActiveChatId] = useState<string>(() => getInitialChatState().activeId)
   const [confirmDialog, setConfirmDialog] = useState<{
@@ -133,7 +138,7 @@ function App() {
   /** Overlay memos on the central canvas, keyed by note/file. */
   const [canvasOverlaysByKey, setCanvasOverlaysByKey] = useState<Record<string, CanvasOverlayMemo[]>>(
     () => {
-      const stored = loadCanvasOverlays()
+      const stored = loadCanvasOverlaysSync()
       const cast: Record<string, CanvasOverlayMemo[]> = {}
       for (const [key, value] of Object.entries(stored)) {
         if (Array.isArray(value)) {
@@ -349,26 +354,48 @@ function App() {
     return newNote
   }, [logAction, pushHistory])
 
-  /** Load persisted files from IndexedDB on mount */
+  /** When authenticated, load notes/timeline/chat/overlays from Google Drive (cloud) */
+  useEffect(() => {
+    if (!isAuthenticated) return
+    let cancelled = false
+    loadAllFromCloud()
+      .then((data) => {
+        if (cancelled || !data) return
+        if (data.notes.length > 0) {
+          setNotes(data.notes)
+          setActiveNoteId((prev) => (data.notes.some((n) => n.id === prev) ? prev : data.notes[0].id))
+        }
+        if (data.timeline.length > 0) setTimeline(data.timeline)
+        if (data.chatThreads.length > 0) {
+          setChatThreads(data.chatThreads)
+          const sorted = [...data.chatThreads].sort(
+            (a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0)
+          )
+          setActiveChatId(sorted[0]?.id ?? data.chatThreads[0].id)
+        }
+        if (Object.keys(data.canvasOverlays).length > 0) setCanvasOverlaysByKey(data.canvasOverlays)
+      })
+      .catch((err) => console.error('Load from cloud failed', err))
+    return () => { cancelled = true }
+  }, [isAuthenticated])
+
+  /** Load files: from cloud when authenticated, else from IndexedDB */
   useEffect(() => {
     let cancelled = false
-    loadFilesFromStorage()
+    loadFiles()
       .then((loaded) => {
         if (!cancelled) setFiles(loaded)
       })
-      .catch((err) => console.error('Load files from storage failed', err))
+      .catch((err) => console.error('Load files failed', err))
     return () => { cancelled = true }
-  }, [])
+  }, [isAuthenticated])
 
   const addFiles = useCallback(async (fileList: File[]) => {
     const added: DroppedFile[] = []
     for (const file of fileList) {
-      const id = `f${Date.now()}_${Math.random().toString(36).slice(2)}`
-      const addedAt = Date.now()
       try {
-        await saveFileToStorage(id, file.name, file.type, file.size, addedAt, file)
-        const url = URL.createObjectURL(file)
-        added.push({ id, name: file.name, type: file.type, url, size: file.size, addedAt })
+        const result = await uploadFileToCloud(file)
+        if (result) added.push(result)
       } catch (err) {
         console.error('Save file failed', file.name, err)
       }
@@ -382,14 +409,18 @@ function App() {
   const renameFile = useCallback(async (id: string, newName: string) => {
     const trimmed = newName.trim()
     if (!trimmed) return
+    const file = files.find(f => f.id === id) as CloudFile | undefined
+    const driveFileId = file?.driveFileId
     try {
-      await renameFileInStorage(id, trimmed)
-      setFiles(prev => prev.map(f => (f.id === id ? { ...f, name: trimmed } : f)))
-      logAction('section_edited', `檔案改名為「${trimmed}」`)
+      const ok = await renameFileInCloud(id, trimmed, driveFileId)
+      if (ok) {
+        setFiles(prev => prev.map(f => (f.id === id ? { ...f, name: trimmed } : f)))
+        logAction('section_edited', `檔案改名為「${trimmed}」`)
+      }
     } catch (err) {
       console.error('Rename file failed', err)
     }
-  }, [logAction])
+  }, [logAction, files])
 
   const requestDeleteFile = useCallback((id: string) => {
     setConfirmDialog({ open: true, type: 'deleteFile', fileId: id })
@@ -413,9 +444,9 @@ function App() {
 
   const performDeleteFile = useCallback((id: string) => {
     pushHistory()
-    const file = files.find(f => f.id === id)
-    if (file) URL.revokeObjectURL(file.url)
-    deleteFileFromStorage(id)
+    const file = files.find(f => f.id === id) as CloudFile | undefined
+    if (file?.url?.startsWith('blob:')) URL.revokeObjectURL(file.url)
+    deleteFileFromCloud(id, file?.driveFileId)
       .then(() => {
         setFiles(prev => prev.filter(f => f.id !== id))
         setActiveFileId(prev => (prev === id ? null : prev))
@@ -486,10 +517,21 @@ function App() {
     if (note) logAction('opened_note', `打開筆記「${note.name}」`)
   }, [notes, logAction])
 
-  const selectFile = useCallback((id: string) => {
+  const selectFile = useCallback(async (id: string) => {
+    const file = files.find(f => f.id === id) as CloudFile | undefined
+    if (file?.driveFileId && (!file.url || file.url === '')) {
+      try {
+        const blob = await filesApi.download(id)
+        if (blob) {
+          const url = URL.createObjectURL(blob)
+          setFiles(prev => prev.map(f => (f.id === id ? { ...f, url } : f)))
+        }
+      } catch (err) {
+        console.error('Fetch file for view failed', err)
+      }
+    }
     setActiveFileId(id)
     setActiveNoteId(null)
-    const file = files.find(f => f.id === id)
     if (file) {
       logAction('opened_file', `打開檔案「${file.name}」`)
       if (file.name?.toLowerCase().endsWith('.pdf')) setLastUsedPdfFile(file)
@@ -500,10 +542,11 @@ function App() {
     ? Math.round((safeNote.sections.filter(s => s.done).length / safeNote.sections.length) * 100)
     : 0
 
-  /** On mount and when page is shown (refresh or restored from bfcache), sync notes from storage so we always show the latest saved state. */
+  /** When not authenticated, on mount/pageshow sync from local storage. When authenticated, cloud load effect handles it. */
   useEffect(() => {
+    if (isAuthenticated) return
     const syncNotesFromStorage = () => {
-      const loaded = loadNotes()
+      const loaded = loadNotesSync()
       if (loaded != null && loaded.length > 0) {
         setNotes(loaded)
         setActiveNoteId(prev => (loaded.some(n => n.id === prev) ? prev : loaded[0].id))
@@ -515,7 +558,7 @@ function App() {
     }
     window.addEventListener('pageshow', onPageShow)
     return () => window.removeEventListener('pageshow', onPageShow)
-  }, [])
+  }, [isAuthenticated])
 
   /** Prevent blank screen: ensure we never have empty notes or stale activeNoteId */
   useEffect(() => {
@@ -544,19 +587,7 @@ function App() {
   }, [chatThreads])
 
   useEffect(() => {
-    // Persist overlay memos positions/content
-    const plain: Record<string, unknown[]> = {}
-    for (const [key, arr] of Object.entries(canvasOverlaysByKey)) {
-      plain[key] = arr.map((m) => ({
-        id: m.id,
-        x: m.x,
-        y: m.y,
-        width: m.width,
-        height: m.height,
-        content: m.content,
-      }))
-    }
-    saveCanvasOverlays(plain)
+    saveCanvasOverlays(canvasOverlaysByKey)
   }, [canvasOverlaysByKey])
 
   useEffect(() => {
