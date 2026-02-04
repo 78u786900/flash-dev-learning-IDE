@@ -45,7 +45,7 @@ export class GoogleDriveService {
     })
 
     this.folderId = folder.data.id!
-    console.log(`Created flash.dev folder: ${this.folderId}`)
+    console.log(`[Drive] Created folder "${FOLDER_NAME}" id=${this.folderId}`)
     return this.folderId
   }
 

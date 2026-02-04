@@ -6,6 +6,7 @@ import session from 'express-session'
 import { authRouter } from './routes/auth.js'
 import { storageRouter } from './routes/storage.js'
 import { filesRouter } from './routes/files.js'
+import { driveRouter } from './routes/drive.js'
 import { authMiddleware } from './middleware/auth.js'
 
 const app = express()
@@ -49,6 +50,7 @@ app.use('/api/auth', authRouter)
 // Protected routes (require authentication)
 app.use('/api/storage', authMiddleware, storageRouter)
 app.use('/api/files', authMiddleware, filesRouter)
+app.use('/api/drive', authMiddleware, driveRouter)
 
 // Error handling middleware
 app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
