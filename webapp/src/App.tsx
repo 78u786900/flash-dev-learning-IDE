@@ -103,13 +103,14 @@ function App() {
   const [activeChatId, setActiveChatId] = useState<string>(() => getInitialChatState().activeId)
   const [confirmDialog, setConfirmDialog] = useState<{
     open: boolean
-    type: 'deleteFile' | 'deleteChat' | 'deleteNote' | 'deleteSection' | 'deleteRecording' | null
+    type: 'deleteFile' | 'deleteChat' | 'deleteNote' | 'deleteSection' | 'deleteRecording' | 'deleteCodeWindow' | null
     fileId?: string
     chatId?: string
     noteId?: string
     sectionIds?: string[]
     sectionId?: string
     recId?: string
+    codeWindowId?: string
   }>({ open: false, type: null })
   const [fullscreenLock, setFullscreenLock] = useState(false)
   const [commandOpen, setCommandOpen] = useState(false)
@@ -358,6 +359,10 @@ function App() {
     setConfirmDialog({ open: true, type: 'deleteRecording', noteId, sectionId, recId })
   }, [])
 
+  const requestDeleteCodeWindow = useCallback((noteId: string, sectionId: string, codeWindowId: string) => {
+    setConfirmDialog({ open: true, type: 'deleteCodeWindow', noteId, sectionId, codeWindowId })
+  }, [])
+
   const performDeleteFile = useCallback((id: string) => {
     const file = files.find(f => f.id === id)
     if (file) URL.revokeObjectURL(file.url)
@@ -412,9 +417,14 @@ function App() {
         ...s,
         recordings: (s.recordings ?? []).filter((r) => r.id !== confirmDialog.recId),
       }))
+    } else if (confirmDialog.type === 'deleteCodeWindow' && confirmDialog.noteId && confirmDialog.sectionId && confirmDialog.codeWindowId) {
+      updateSection(confirmDialog.noteId, confirmDialog.sectionId, (s) => ({
+        ...s,
+        codeWindows: (s.codeWindows ?? []).filter((w) => w.id !== confirmDialog.codeWindowId),
+      }))
     }
     setConfirmDialog({ open: false, type: null })
-  }, [confirmDialog.type, confirmDialog.fileId, confirmDialog.chatId, confirmDialog.noteId, confirmDialog.sectionIds, confirmDialog.sectionId, confirmDialog.recId, performDeleteFile, performDeleteChat, deleteNote, deleteSection, updateSection])
+  }, [confirmDialog.type, confirmDialog.fileId, confirmDialog.chatId, confirmDialog.noteId, confirmDialog.sectionIds, confirmDialog.sectionId, confirmDialog.recId, confirmDialog.codeWindowId, performDeleteFile, performDeleteChat, deleteNote, deleteSection, updateSection])
 
   const handleConfirmDialogCancel = useCallback(() => {
     setConfirmDialog({ open: false, type: null })
@@ -614,6 +624,8 @@ function App() {
               language: action.language,
               title: action.title,
               source: action.source,
+              aspectRatio: action.aspectRatio ?? '5:3',
+              model: action.model ?? 'gemini-3-pro',
             },
           ],
         }
@@ -669,6 +681,9 @@ function App() {
                 onSectionDone={(title) => logAction('section_done', `完成章節「${title}」`)}
                 onRequestDeleteSection={(sectionId) => requestDeleteSection(displayNote.id, [sectionId])}
                 onRequestDeleteRecording={(sectionId, recId) => requestDeleteRecording(displayNote.id, sectionId, recId)}
+                onRequestDeleteCodeWindow={(sectionId, codeWindowId) =>
+                  requestDeleteCodeWindow(displayNote.id, sectionId, codeWindowId)
+                }
               />
             ) : activeFile ? (
               <FileViewer
@@ -754,7 +769,9 @@ function App() {
             confirmDialog.type === 'deleteChat' ? '刪除對話' :
             confirmDialog.type === 'deleteNote' ? '刪除筆記' :
             confirmDialog.type === 'deleteSection' ? '刪除此章節' :
-            confirmDialog.type === 'deleteRecording' ? '刪除此錄音' : '確認'
+            confirmDialog.type === 'deleteRecording' ? '刪除此錄音' :
+            confirmDialog.type === 'deleteCodeWindow' ? '刪除此 Code Window' :
+            '確認'
           }
           message={
             confirmDialog.type === 'deleteFile'
@@ -767,6 +784,8 @@ function App() {
               ? '確定要刪除此章節？刪除後無法復原。'
               : confirmDialog.type === 'deleteRecording'
               ? '確定要刪除此段錄音？刪除後無法復原。'
+              : confirmDialog.type === 'deleteCodeWindow'
+              ? '確定要刪除此 Code Window？刪除後無法復原。'
               : ''
           }
           confirmLabel="刪除"

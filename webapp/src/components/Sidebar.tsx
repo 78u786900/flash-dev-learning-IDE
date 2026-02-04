@@ -40,6 +40,55 @@ function fileIcon(name: string): string {
   return FILE_ICONS[ext] ?? FILE_ICONS.default
 }
 
+type FileGroupId = 'pdf' | 'doc' | 'slides' | 'sheets' | 'images' | 'videos' | 'other'
+
+interface FileGroup {
+  id: FileGroupId
+  label: string
+  files: DroppedFile[]
+}
+
+function groupFiles(files: DroppedFile[]): FileGroup[] {
+  const groups: Record<FileGroupId, DroppedFile[]> = {
+    pdf: [],
+    doc: [],
+    slides: [],
+    sheets: [],
+    images: [],
+    videos: [],
+    other: [],
+  }
+
+  for (const file of files) {
+    const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
+    if (ext === 'pdf') groups.pdf.push(file)
+    else if (ext === 'doc' || ext === 'docx') groups.doc.push(file)
+    else if (ext === 'ppt' || ext === 'pptx') groups.slides.push(file)
+    else if (ext === 'xls' || ext === 'xlsx') groups.sheets.push(file)
+    else if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) groups.images.push(file)
+    else if (['mp4', 'webm'].includes(ext)) groups.videos.push(file)
+    else groups.other.push(file)
+  }
+
+  const order: { id: FileGroupId; label: string }[] = [
+    { id: 'pdf', label: 'PDF' },
+    { id: 'doc', label: 'Word / Docs' },
+    { id: 'slides', label: 'Slides' },
+    { id: 'sheets', label: 'Sheets' },
+    { id: 'images', label: 'Images' },
+    { id: 'videos', label: 'Videos' },
+    { id: 'other', label: 'Other files' },
+  ]
+
+  return order
+    .map(cfg => ({
+      id: cfg.id,
+      label: cfg.label,
+      files: groups[cfg.id],
+    }))
+    .filter(group => group.files.length > 0)
+}
+
 export function Sidebar({
   notes,
   files,
@@ -54,12 +103,22 @@ export function Sidebar({
   onDeleteFile,
 }: SidebarProps) {
   const [newNoteName, setNewNoteName] = useState('')
+  const [notesOpen, setNotesOpen] = useState(true)
   const [outlineOpen, setOutlineOpen] = useState(true)
   const [timelineOpen, setTimelineOpen] = useState(true)
   const [isDragging, setIsDragging] = useState(false)
   const [editingFileId, setEditingFileId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
   const renameInputRef = useRef<HTMLInputElement>(null)
+  const [openFileGroups, setOpenFileGroups] = useState<Record<FileGroupId, boolean>>({
+    pdf: true,
+    doc: true,
+    slides: true,
+    sheets: true,
+    images: true,
+    videos: true,
+    other: true,
+  })
 
   useEffect(() => {
     if (editingFileId) {
@@ -117,6 +176,8 @@ export function Sidebar({
     return d.toLocaleDateString('zh-HK', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
   }
 
+  const fileGroups = groupFiles(files)
+
   return (
     <aside className="ide-sidebar">
       <div className="ide-sidebar-section">
@@ -141,73 +202,106 @@ export function Sidebar({
           <span className="ide-sidebar-dropzone-text">拖放檔案到呢度</span>
           <span className="ide-sidebar-dropzone-hint">docx, pptx, pdf, excel, 圖, 片…</span>
         </div>
-        {notes.map(note => (
+        <div className="ide-sidebar-file-group">
           <div
-            key={note.id}
-            className={`ide-sidebar-item ${activeNoteId === note.id && !activeFileId ? 'active' : ''}`}
-            onClick={() => onSelectNote(note.id)}
+            className="ide-sidebar-file-group-header"
+            onClick={() => setNotesOpen(open => !open)}
           >
-            <span className="icon">📄</span>
-            <span className="ide-sidebar-item-name" title={note.name}>{note.name}</span>
+            <span className="ide-sidebar-file-group-chevron">
+              {notesOpen ? '▼' : '▶'}
+            </span>
+            <span className="ide-sidebar-file-group-title">Notes</span>
+            <span className="ide-sidebar-file-group-count">{notes.length}</span>
           </div>
-        ))}
-        {files.map(file => (
-          <div
-            key={file.id}
-            className={`ide-sidebar-item ide-sidebar-item-file ${activeFileId === file.id ? 'active' : ''}`}
-            onClick={() => editingFileId !== file.id && onSelectFile(file.id)}
-          >
-            <span className="icon">{fileIcon(file.name)}</span>
-            {editingFileId === file.id ? (
-              <input
-                ref={renameInputRef}
-                type="text"
-                className="ide-sidebar-file-rename-input"
-                value={editingName}
-                onChange={e => setEditingName(e.target.value)}
-                onBlur={handleRenameSubmit}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') handleRenameSubmit()
-                  if (e.key === 'Escape') {
-                    setEditingFileId(null)
-                    setEditingName('')
-                  }
-                }}
-                onClick={e => e.stopPropagation()}
-              />
-            ) : (
-              <>
-                <span className="ide-sidebar-item-name" title={file.name}>{file.name}</span>
-                {(onRenameFile || onDeleteFile) && (
-                  <span className="ide-sidebar-file-actions" onClick={e => e.stopPropagation()}>
-                    {onRenameFile && (
-                      <button
-                        type="button"
-                        className="ide-sidebar-file-action"
-                        title="重新命名"
-                        aria-label="重新命名"
-                        onClick={() => setEditingFileId(file.id)}
-                      >
-                        ✎
-                      </button>
+          {notesOpen &&
+            notes.map(note => (
+              <div
+                key={note.id}
+                className={`ide-sidebar-item ${activeNoteId === note.id && !activeFileId ? 'active' : ''}`}
+                onClick={() => onSelectNote(note.id)}
+              >
+                <span className="icon">📄</span>
+                <span className="ide-sidebar-item-name" title={note.name}>{note.name}</span>
+              </div>
+            ))}
+        </div>
+        {fileGroups.map(group => {
+          const isOpen = openFileGroups[group.id] ?? true
+          return (
+            <div key={group.id} className="ide-sidebar-file-group">
+              <div
+                className="ide-sidebar-file-group-header"
+                onClick={() =>
+                  setOpenFileGroups(prev => ({ ...prev, [group.id]: !isOpen }))
+                }
+              >
+                <span className="ide-sidebar-file-group-chevron">
+                  {isOpen ? '▼' : '▶'}
+                </span>
+                <span className="ide-sidebar-file-group-title">{group.label}</span>
+                <span className="ide-sidebar-file-group-count">{group.files.length}</span>
+              </div>
+              {isOpen &&
+                group.files.map(file => (
+                  <div
+                    key={file.id}
+                    className={`ide-sidebar-item ide-sidebar-item-file ${activeFileId === file.id ? 'active' : ''}`}
+                    onClick={() => editingFileId !== file.id && onSelectFile(file.id)}
+                  >
+                    <span className="icon">{fileIcon(file.name)}</span>
+                    {editingFileId === file.id ? (
+                      <input
+                        ref={renameInputRef}
+                        type="text"
+                        className="ide-sidebar-file-rename-input"
+                        value={editingName}
+                        onChange={e => setEditingName(e.target.value)}
+                        onBlur={handleRenameSubmit}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') handleRenameSubmit()
+                          if (e.key === 'Escape') {
+                            setEditingFileId(null)
+                            setEditingName('')
+                          }
+                        }}
+                        onClick={e => e.stopPropagation()}
+                      />
+                    ) : (
+                      <>
+                        <span className="ide-sidebar-item-name" title={file.name}>{file.name}</span>
+                        {(onRenameFile || onDeleteFile) && (
+                          <span className="ide-sidebar-file-actions" onClick={e => e.stopPropagation()}>
+                            {onRenameFile && (
+                              <button
+                                type="button"
+                                className="ide-sidebar-file-action"
+                                title="重新命名"
+                                aria-label="重新命名"
+                                onClick={() => setEditingFileId(file.id)}
+                              >
+                                ✎
+                              </button>
+                            )}
+                            {onDeleteFile && (
+                              <button
+                                type="button"
+                                className="ide-sidebar-file-action ide-sidebar-file-action-delete"
+                                title="刪除檔案"
+                                aria-label="刪除檔案"
+                                onClick={() => onDeleteFile(file.id)}
+                              >
+                                ×
+                              </button>
+                            )}
+                          </span>
+                        )}
+                      </>
                     )}
-                    {onDeleteFile && (
-                      <button
-                        type="button"
-                        className="ide-sidebar-file-action ide-sidebar-file-action-delete"
-                        title="刪除檔案"
-                        aria-label="刪除檔案"
-                        onClick={() => onDeleteFile(file.id)}
-                      >
-                        ×
-                      </button>
-                    )}
-                  </span>
-                )}
-              </>
-            )}
-          </div>
-        ))}
+                  </div>
+                ))}
+            </div>
+          )
+        })}
       </div>
       <div className="ide-sidebar-add">
         <input

@@ -380,14 +380,39 @@ export async function run_create_code_window(
   if (language === 'html') {
     const prompt = `你係一個前端工程師，要為學習筆記建立一個 **單一 HTML 檔**，用嚟示範：${instructions}。
 
-要求：
+執行環境說明（非常重要，請遵守）：
+- 呢個 HTML 會被放入一個 <iframe> 裏面顯示，唔係整個瀏覽器視窗。
+- <iframe> 已經有一個固定高度同寬度，你唔需要自己建立外層 <iframe>。
+
+一般要求：
 - 請輸出「完整 HTML 檔」，包括 <!doctype html>、<html>、<head>、<body>。
 - 可以使用 CSS 和 JavaScript（inline 或 <style>/<script>），亦可以載入少量前端 library（例如 Three.js、GSAP），**但一定要用 <script src="..."></script> CDN 方式**，唔好用 import / require / bundler。
-- 例如想用 Three.js，可以：
--   <script src="https://unpkg.com/three@0.161.0/build/three.min.js"></script>
--   然後用全域變數 THREE 建立場景（scene、camera、renderer）。
 - 如果你只需要簡單動畫，可以直接用 <svg>、CSS animation、requestAnimationFrame 等。
 - 重點係：code 要短小清晰，適合教學示範，唔好引入太多無關內容。
+
+⚠️ 3D / canvas / WebGL（Three.js 等）特別指引（避免喺 iframe 入面 render 唔到）：
+- 如果你用 canvas 或 Three.js，務必：
+  - 喺 CSS 入面設定：
+      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #111827; }
+      canvas { display: block; }
+  - 使用 window.innerWidth 同 window.innerHeight 決定 renderer / canvas 大小，**唔好依賴 getBoundingClientRect() 或 document.body.clientWidth 等外層尺寸**。
+  - 為視窗 resize 加 handler，確保畫面會隨著大小更新：
+      function resize() {
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        renderer.setSize(w, h, false);
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+      }
+      window.addEventListener('resize', resize);
+      resize();
+- 請直接將 renderer.domElement 或 <canvas> 加入 document.body 或一個 #app 容器，唔好再建立額外 iframe。
+
+Three.js 例子（只係用嚟示範寫法，唔好原文複製）：
+-   <script src="https://unpkg.com/three@0.161.0/build/three.min.js"></script>
+-   然後用全域變數 THREE 建立場景（scene、camera、renderer）。
+
+輸出格式：
 - **只輸出 HTML 代碼本身**，唔好加說明文字、唔好用 markdown、唔好加 \`\`\` 標記。
 
 ${sectionContext}請立即輸出完整 HTML 檔：`
@@ -397,6 +422,8 @@ ${sectionContext}請立即輸出完整 HTML 檔：`
       noteId: note.id,
       sectionId: section.id,
       language: 'html',
+      // Default preview ratio; user can change later in UI.
+      aspectRatio: '5:3',
       title,
       source: code,
     }
@@ -433,6 +460,8 @@ ${sectionContext}請立即輸出完整 React/JSX 檔內容：`
     noteId: note.id,
     sectionId: section.id,
     language: 'react',
+    // Default preview ratio; user can change later in UI.
+    aspectRatio: '5:3',
     title,
     source: code,
   }

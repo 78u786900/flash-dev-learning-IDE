@@ -3,6 +3,7 @@ import type { Note, Section, SectionRecording, SectionCodeWindow } from '../type
 import { NoteContentWithLatex } from './NoteContentWithLatex'
 import { transcribeWithGeminiFlash } from '../utils/audioTranscription'
 import { CodeRenderWindow } from './CodeRenderWindow'
+import { generateCodeWindowSource } from '../utils/geminiInline'
 
 /** Convert data URL to Blob so we can use createObjectURL for reliable playback (data URLs often fail with WebM in audio elements). */
 function dataUrlToBlob(dataUrl: string): Blob | null {
@@ -61,15 +62,27 @@ interface CanvasProps {
   /** Kept for backward compatibility; not used in current UI. */
   onRequestDeleteSection?: (sectionId: string) => void
   onRequestDeleteRecording?: (sectionId: string, recId: string) => void
+  onRequestDeleteCodeWindow?: (sectionId: string, codeWindowId: string) => void
 }
 
-export function Canvas({ note, onUpdateSection, onAddSection, onSectionDone, onRequestDeleteRecording }: CanvasProps) {
+export function Canvas({
+  note,
+  onUpdateSection,
+  onAddSection,
+  onSectionDone,
+  onRequestDeleteRecording,
+  onRequestDeleteCodeWindow,
+}: CanvasProps) {
   const [editingSectionId, setEditingSectionId] = useState<string | null>(null)
+  const [editingCodeWindowId, setEditingCodeWindowId] = useState<string | null>(null)
   const [recordingSectionId, setRecordingSectionId] = useState<string | null>(null)
   const [recordingElapsedSeconds, setRecordingElapsedSeconds] = useState(0)
   const [pendingRecording, setPendingRecording] = useState<{ sectionId: string; blob: Blob; duration: number } | null>(null)
   const [transcribingRecId, setTranscribingRecId] = useState<string | null>(null)
   const [transcribingElapsedSeconds, setTranscribingElapsedSeconds] = useState(0)
+  const [generatingCodeWindowId, setGeneratingCodeWindowId] = useState<string | null>(null)
+  const [inlineError, setInlineError] = useState<string | null>(null)
+  const [refreshNonceById, setRefreshNonceById] = useState<Record<string, number>>({})
   const editRef = useRef<HTMLDivElement>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const startTimeRef = useRef<number>(0)
@@ -407,68 +420,223 @@ export function Canvas({ note, onUpdateSection, onAddSection, onSectionDone, onR
             <div className="ide-section-codewindows">
               <span className="ide-section-codewindows-label">Code render windows</span>
               <div className="ide-section-codewindows-list">
-                {section.codeWindows.map((cw) => (
-                  <div key={cw.id} className="ide-code-window-card">
-                    <div className="ide-code-window-card-header">
-                      <input
-                        type="text"
-                        className="ide-code-window-title"
-                        value={cw.title ?? ''}
-                        placeholder="標題（可選，例如：SVG 動畫、Mini game）"
-                        onChange={(e) => {
-                          const value = e.target.value
+                {section.codeWindows.map((cw) => {
+                  const isEditingCode = editingCodeWindowId === cw.id
+                  return (
+                    <div key={cw.id} className="ide-code-window-card">
+                      <div className="ide-code-window-card-header">
+                        <span className="ide-code-window-prompt-label">PROMPT</span>
+                        {/* 1. Prompt (title) */}
+                        <input
+                          type="text"
+                          className="ide-code-window-title"
+                          value={cw.title ?? ''}
+                          placeholder="標題（可選，例如：SVG 動畫、Mini game）"
+                          onChange={(e) => {
+                            const value = e.target.value
+                            onUpdateSection(section.id, (s) => ({
+                              ...s,
+                              codeWindows: (s.codeWindows ?? []).map((w) =>
+                                w.id === cw.id ? { ...w, title: value || undefined } : w
+                              ),
+                            }))
+                          }}
+                        />
+                        {/* 2. Refresh button (forces iframe remount to restart animation) */}
+                        <button
+                          type="button"
+                          className="ide-code-window-refresh"
+                          title="重新整理預覽（重頭再播動畫）"
+                          onClick={() => {
+                            setRefreshNonceById((prev) => ({
+                              ...prev,
+                              [cw.id]: (prev[cw.id] ?? 0) + 1,
+                            }))
+                          }}
+                        >
+                          <svg
+                            className="ide-code-window-refresh-icon"
+                            viewBox="0 0 20 20"
+                            aria-hidden="true"
+                          >
+                            <path
+                              d="M4.5 5.5A6 6 0 0 1 16 8h-2.5M16 8V4.5M15.5 14.5A6 6 0 0 1 4 12h2.5M4 12v3.5"
+                              fill="none"
+                              stroke="currentColor"
+                              stroke-width="1.6"
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                            />
+                          </svg>
+                        </button>
+                        {/* 3. Model selector */}
+                        <select
+                          className="ide-code-window-model-select"
+                          value={cw.model ?? 'gemini-3-pro'}
+                          onChange={(e) => {
+                            const value = e.target.value as SectionCodeWindow['model']
+                            onUpdateSection(section.id, (s) => ({
+                              ...s,
+                              codeWindows: (s.codeWindows ?? []).map((w) =>
+                                w.id === cw.id ? { ...w, model: value } : w,
+                              ),
+                            }))
+                          }}
+                        >
+                          <option value="gemini-3-pro">Gemini 3 Pro</option>
+                          <option value="gemini-3-flash">Gemini 3 Flash</option>
+                        </select>
+                        {/* 4. Generate button (inline Gemini call, independent from Agent) */}
+                        <button
+                          type="button"
+                          className="ide-code-window-generate"
+                          title="根據上面 PROMPT 生成 / 更新代碼"
+                          disabled={!note || generatingCodeWindowId === cw.id}
+                          onClick={() => {
+                            if (!window || !('VITE_GEMINI_API_KEY' in import.meta.env)) {
+                              // Fall back to key from Vite env; Canvas itself doesn't know the key directly.
+                            }
+                            if (!import.meta.env.VITE_GEMINI_API_KEY) {
+                              setInlineError('未設定 Gemini API key，請先在 .env 填寫 VITE_GEMINI_API_KEY。')
+                              return
+                            }
+                            setInlineError(null)
+                            setGeneratingCodeWindowId(cw.id)
+                            generateCodeWindowSource({
+                              apiKey: import.meta.env.VITE_GEMINI_API_KEY as string,
+                              model: cw.model ?? 'gemini-3-pro',
+                              language: cw.language,
+                              userPrompt: cw.title ?? '',
+                              sectionTitle: section.title,
+                              windowTitle: cw.title,
+                            })
+                              .then((code) => {
+                                onUpdateSection(section.id, (s) => ({
+                                  ...s,
+                                  codeWindows: (s.codeWindows ?? []).map((w) =>
+                                    w.id === cw.id ? { ...w, source: code } : w,
+                                  ),
+                                }))
+                              })
+                              .catch((err) => {
+                                const msg = err instanceof Error ? err.message : '生成代碼失敗，請稍後再試。'
+                                setInlineError(msg)
+                              })
+                              .finally(() => {
+                                setGeneratingCodeWindowId((current) => (current === cw.id ? null : current))
+                              })
+                          }}
+                        >
+                          {generatingCodeWindowId === cw.id ? (
+                            <span className="ide-code-window-generate-spinner" aria-hidden="true" />
+                          ) : (
+                            <>
+                              <svg
+                                className="ide-code-window-generate-icon"
+                                viewBox="0 0 20 20"
+                                aria-hidden="true"
+                              >
+                                <path
+                                  d="M3 10.5L8.5 16 17 4"
+                                  fill="none"
+                                  stroke="currentColor"
+                                  strokeWidth="1.8"
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                />
+                              </svg>
+                              <span className="sr-only">Generate</span>
+                            </>
+                          )}
+                        </button>
+                        {/* 4. Aspect ratio selector */}
+                        <select
+                          className="ide-code-window-aspect-select"
+                          value={cw.aspectRatio ?? '5:3'}
+                          onChange={(e) => {
+                            const value = e.target.value as SectionCodeWindow['aspectRatio']
+                            onUpdateSection(section.id, (s) => ({
+                              ...s,
+                              codeWindows: (s.codeWindows ?? []).map((w) =>
+                                w.id === cw.id ? { ...w, aspectRatio: value } : w
+                              ),
+                            }))
+                          }}
+                        >
+                          <option value="1:1">1:1</option>
+                          <option value="4:3">4:3</option>
+                          <option value="16:9">16:9</option>
+                          <option value="2:1">2:1</option>
+                          <option value="5:3">5:3</option>
+                        </select>
+                        {/* 5. Choose HTML or React */}
+                        <select
+                          className="ide-code-window-language-select"
+                          value={cw.language}
+                          onChange={(e) => {
+                            const lang = e.target.value as SectionCodeWindow['language']
+                            onUpdateSection(section.id, (s) => ({
+                              ...s,
+                              codeWindows: (s.codeWindows ?? []).map((w) =>
+                                w.id === cw.id ? { ...w, language: lang } : w
+                              ),
+                            }))
+                          }}
+                        >
+                          <option value="html">HTML</option>
+                          <option value="react">React (JSX)</option>
+                        </select>
+                        {/* 6. Edit / Preview toggle */}
+                        <button
+                          type="button"
+                          className="ide-code-window-toggle"
+                          onClick={() =>
+                            setEditingCodeWindowId(isEditingCode ? null : cw.id)
+                          }
+                        >
+                          {isEditingCode ? 'Preview' : 'Edit code'}
+                        </button>
+                        {/* 7. Delete code window (with global confirm dialog) */}
+                        <button
+                          type="button"
+                          className="ide-code-window-delete"
+                          onClick={() => {
+                            if (onRequestDeleteCodeWindow) {
+                              onRequestDeleteCodeWindow(section.id, cw.id)
+                            } else {
+                              onUpdateSection(section.id, (s) => ({
+                                ...s,
+                                codeWindows: (s.codeWindows ?? []).filter((w) => w.id !== cw.id),
+                              }))
+                              if (editingCodeWindowId === cw.id) {
+                                setEditingCodeWindowId(null)
+                              }
+                            }
+                          }}
+                          title="刪除此 code window"
+                          aria-label="刪除此 code window"
+                        >
+                          ×
+                        </button>
+                      </div>
+                      <CodeRenderWindow
+                        windowDef={cw}
+                        aspectRatio={cw.aspectRatio}
+                        // When refreshNonce changes, React will remount the iframe and restart any HTML/JS animations
+                        key={refreshNonceById[cw.id] ?? 0}
+                        isEditing={isEditingCode}
+                        onChangeSource={(value) => {
                           onUpdateSection(section.id, (s) => ({
                             ...s,
                             codeWindows: (s.codeWindows ?? []).map((w) =>
-                              w.id === cw.id ? { ...w, title: value || undefined } : w
+                              w.id === cw.id ? { ...w, source: value } : w
                             ),
                           }))
                         }}
                       />
-                      <select
-                        className="ide-code-window-language-select"
-                        value={cw.language}
-                        onChange={(e) => {
-                          const lang = e.target.value as SectionCodeWindow['language']
-                          onUpdateSection(section.id, (s) => ({
-                            ...s,
-                            codeWindows: (s.codeWindows ?? []).map((w) =>
-                              w.id === cw.id ? { ...w, language: lang } : w
-                            ),
-                          }))
-                        }}
-                      >
-                        <option value="html">HTML</option>
-                        <option value="react">React (JSX)</option>
-                      </select>
-                      <button
-                        type="button"
-                        className="ide-code-window-delete"
-                        onClick={() => {
-                          onUpdateSection(section.id, (s) => ({
-                            ...s,
-                            codeWindows: (s.codeWindows ?? []).filter((w) => w.id !== cw.id),
-                          }))
-                        }}
-                        title="刪除此 code window"
-                        aria-label="刪除此 code window"
-                      >
-                        ×
-                      </button>
                     </div>
-                    <CodeRenderWindow
-                      windowDef={cw}
-                      onChangeSource={(value) => {
-                        onUpdateSection(section.id, (s) => ({
-                          ...s,
-                          codeWindows: (s.codeWindows ?? []).map((w) =>
-                            w.id === cw.id ? { ...w, source: value } : w
-                          ),
-                        }))
-                      }}
-                    />
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           )}
@@ -514,6 +682,7 @@ export function Canvas({ note, onUpdateSection, onAddSection, onSectionDone, onR
                 const initial: SectionCodeWindow = {
                   id,
                   language: 'html',
+                  aspectRatio: '5:3',
                   title: '新 Code Window',
                   source: '<!-- 在此輸入 HTML / CSS / JS 小實驗，例如 SVG 或簡單動畫。-->',
                 }

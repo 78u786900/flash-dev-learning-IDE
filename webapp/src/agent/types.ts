@@ -60,7 +60,18 @@ export type ToolResultAction =
   | { type: 'delete_note'; noteId: string }
   | { type: 'delete_section'; noteId: string; sectionIds: string[] }
   /** Upsert (create) a code render window attached to a specific section (HTML / React snippet). */
-  | { type: 'upsert_code_window'; noteId: string; sectionId: string; language: CodeWindowLanguage; title?: string; source: string }
+  | {
+      type: 'upsert_code_window'
+      noteId: string
+      sectionId: string
+      language: CodeWindowLanguage
+      title?: string
+      source: string
+      /** Optional preferred aspect ratio for the preview (UI only). */
+      aspectRatio?: '1:1' | '4:3' | '16:9' | '2:1' | '5:3'
+      /** Optional preferred Gemini model for future inline generation (UI only). */
+      model?: 'gemini-3-pro' | 'gemini-3-flash'
+    }
 
 /** Gemini function declaration shape */
 export interface GeminiFunctionDeclaration {

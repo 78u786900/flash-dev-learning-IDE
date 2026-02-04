@@ -1,8 +1,12 @@
 import { useMemo, useState, useRef, useEffect } from 'react'
-import type { SectionCodeWindow } from '../types'
+import type { CodeWindowAspectRatio, SectionCodeWindow } from '../types'
 
 interface CodeRenderWindowProps {
   windowDef: SectionCodeWindow
+  /** Whether we are showing the editor (true) or the preview iframe (false). */
+  isEditing: boolean
+  /** Aspect ratio to render the preview at (fallback 4:3). */
+  aspectRatio?: CodeWindowAspectRatio
   onChangeSource: (next: string) => void
 }
 
@@ -29,7 +33,28 @@ function stripMarkdownFence(raw: string): string {
 function buildHtmlSrcDoc(source: string): string {
   const cleaned = stripMarkdownFence(source)
   if (!cleaned) {
-    return '<!doctype html><html><body><p style="font-family:system-ui">（尚未輸入 HTML）</p></body></html>'
+    return [
+      '<!doctype html>',
+      '<html>',
+      '<head>',
+      '  <meta charset="utf-8" />',
+      '  <style>',
+      '    html, body { margin: 0; padding: 0; height: 100%; background: #111827; color: #e5e7eb; }',
+      '    body { display: flex; align-items: center; justify-content: center; font-family: system-ui, sans-serif; }',
+      '    * { box-sizing: border-box; }',
+      '    /* Subtle, thin scrollbars inside preview iframe */',
+      '    * { scrollbar-width: thin; scrollbar-color: #4b5563 transparent; }',
+      '    *::-webkit-scrollbar { width: 6px; height: 6px; }',
+      '    *::-webkit-scrollbar-track { background: transparent; }',
+      '    *::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }',
+      '    *::-webkit-scrollbar-thumb:hover { background: #6b7280; }',
+      '  </style>',
+      '</head>',
+      '<body>',
+      '  <p>（尚未輸入 HTML）</p>',
+      '</body>',
+      '</html>',
+    ].join('\n')
   }
   const lower = cleaned.toLowerCase()
   const hasHtmlShell = lower.includes('<html') || lower.includes('<!doctype')
@@ -38,7 +63,19 @@ function buildHtmlSrcDoc(source: string): string {
   return [
     '<!doctype html>',
     '<html>',
-    '<head><meta charset="utf-8" /></head>',
+    '<head>',
+    '  <meta charset="utf-8" />',
+    '  <style>',
+    '    html, body { margin: 0; padding: 0; height: 100%; background: #111827; color: #e5e7eb; }',
+    '    * { box-sizing: border-box; }',
+    '    /* Subtle, thin scrollbars inside preview iframe */',
+    '    * { scrollbar-width: thin; scrollbar-color: #4b5563 transparent; }',
+    '    *::-webkit-scrollbar { width: 6px; height: 6px; }',
+    '    *::-webkit-scrollbar-track { background: transparent; }',
+    '    *::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }',
+    '    *::-webkit-scrollbar-thumb:hover { background: #6b7280; }',
+    '  </style>',
+    '</head>',
     '<body>',
     cleaned,
     '</body>',
@@ -79,6 +116,12 @@ function buildReactSrcDoc(source: string): string {
     '    body { background: #0b0c10; color: #e5e7eb; }',
     '    #root { height: 100%; }',
     '    * { box-sizing: border-box; }',
+    '    /* Subtle, thin scrollbars inside preview iframe */',
+    '    * { scrollbar-width: thin; scrollbar-color: #4b5563 transparent; }',
+    '    *::-webkit-scrollbar { width: 6px; height: 6px; }',
+    '    *::-webkit-scrollbar-track { background: transparent; }',
+    '    *::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }',
+    '    *::-webkit-scrollbar-thumb:hover { background: #6b7280; }',
     '  </style>',
     '</head>',
     '<body>',
@@ -94,9 +137,23 @@ function buildReactSrcDoc(source: string): string {
   ].join('\n')
 }
 
-export function CodeRenderWindow({ windowDef, onChangeSource }: CodeRenderWindowProps) {
-  const [isEditing, setIsEditing] = useState(false)
-  const [frameHeight, setFrameHeight] = useState(260)
+function aspectRatioToNumber(ar?: CodeWindowAspectRatio): number {
+  switch (ar) {
+    case '1:1':
+      return 1
+    case '16:9':
+      return 16 / 9
+    case '2:1':
+      return 2
+    case '4:3':
+      return 4 / 3
+    case '5:3':
+    default:
+      return 5 / 3
+  }
+}
+
+export function CodeRenderWindow({ windowDef, isEditing, aspectRatio, onChangeSource }: CodeRenderWindowProps) {
   const textAreaRef = useRef<HTMLTextAreaElement | null>(null)
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
 
@@ -116,18 +173,6 @@ export function CodeRenderWindow({ windowDef, onChangeSource }: CodeRenderWindow
 
   return (
     <div className={`ide-code-window ${isEditing ? 'ide-code-window--editing' : ''}`}>
-      <div className="ide-code-window-header">
-        <span className="ide-code-window-language">
-          {windowDef.language === 'react' ? 'React (JSX)' : 'HTML'}
-        </span>
-        <button
-          type="button"
-          className="ide-code-window-toggle"
-          onClick={() => setIsEditing(v => !v)}
-        >
-          {isEditing ? 'Preview' : 'Edit code'}
-        </button>
-      </div>
       {isEditing ? (
         <textarea
           ref={textAreaRef}
@@ -141,22 +186,15 @@ export function CodeRenderWindow({ windowDef, onChangeSource }: CodeRenderWindow
           }
         />
       ) : (
-        <div className="ide-code-window-frame-wrap">
+        <div
+          className="ide-code-window-frame-wrap"
+          style={{ aspectRatio: aspectRatioToNumber(aspectRatio) }}
+        >
           <iframe
             ref={iframeRef}
             className="ide-code-window-iframe"
             srcDoc={srcDoc}
             title={windowDef.title || 'Code render preview'}
-            style={{ height: frameHeight }}
-            onLoad={() => {
-              const doc = iframeRef.current?.contentDocument
-              const body = doc?.body
-              if (body) {
-                const scrollHeight = body.scrollHeight || 260
-                const clamped = Math.max(200, Math.min(scrollHeight + 24, 720))
-                setFrameHeight(clamped)
-              }
-            }}
           />
         </div>
       )}

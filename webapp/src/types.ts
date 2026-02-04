@@ -22,12 +22,20 @@ export interface SectionRecording {
 
 export type CodeWindowLanguage = 'html' | 'react'
 
+export type CodeWindowAspectRatio = '1:1' | '4:3' | '16:9' | '2:1' | '5:3'
+
+export type CodeWindowModel = 'gemini-3-pro' | 'gemini-3-flash'
+
 export interface SectionCodeWindow {
   id: string
-  /** Optional short label shown in the UI (e.g. \"SVG animation\", \"Mini game\"). */
+  /** Optional short label shown in the UI (e.g. "SVG animation", "Mini game"). */
   title?: string
   /** Render mode: plain HTML snippet or React (JSX) snippet compiled in an isolated iframe. */
   language: CodeWindowLanguage
+  /** Preferred preview aspect ratio (defaults to 4:3 when omitted). */
+  aspectRatio?: CodeWindowAspectRatio
+  /** Preferred Gemini model for inline generation in this window. */
+  model?: CodeWindowModel
   /** Source code for this window. For HTML, this is the full snippet; for React, user code will run inside a template that mounts to #root. */
   source: string
 }

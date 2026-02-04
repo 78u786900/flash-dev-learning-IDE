@@ -186,6 +186,42 @@ body {
   padding: 8px 0;
 }
 
+/* File groups (virtual folders) */
+.ide-sidebar-file-group {
+  margin-top: 4px;
+}
+
+.ide-sidebar-file-group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.ide-sidebar-file-group-header:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.ide-sidebar-file-group-chevron {
+  width: 10px;
+}
+
+.ide-sidebar-file-group-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.ide-sidebar-file-group-count {
+  font-size: 10px;
+  opacity: 0.7;
+}
+
 .ide-sidebar-header-row {
   display: flex;
   align-items: center;
@@ -370,8 +406,7 @@ body {
 }
 
 .ide-timeline-list {
-  max-height: 200px;
-  overflow-y: auto;
+  /* Let timeline grow; sidebar as a whole scrolls */
 }
 
 .ide-timeline-empty {
@@ -2419,6 +2454,14 @@ body {
   gap: 6px;
 }
 
+.ide-code-window-prompt-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
 .ide-code-window-title {
   flex: 1;
   min-width: 0;
@@ -2426,8 +2469,10 @@ body {
   border: none;
   background: transparent;
   color: var(--text);
-  font-size: 12px;
-  padding: 3px 6px;
+  font-size: 13px;
+  padding: 4px 8px;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-weight: 500;
 }
 
 .ide-code-window-language-select {
@@ -2435,6 +2480,100 @@ body {
   border: none;
   background: transparent;
   color: var(--text);
+  font-size: 11px;
+  padding: 3px 6px;
+}
+
+/* Model selector + Generate button in code window header */
+.ide-code-window-model-select {
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 3px 8px;
+}
+
+/* Refresh button next to model select */
+.ide-code-window-refresh {
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-dim);
+}
+
+.ide-code-window-refresh:hover {
+  color: var(--text);
+}
+
+.ide-code-window-refresh-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.ide-code-window-generate {
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ide-code-window-generate:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+.ide-code-window-generate-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.ide-code-window-generate-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-top-color: #ffffff;
+  animation: ide-code-window-spin 0.8s linear infinite;
+}
+
+@keyframes ide-code-window-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Aspect-ratio selector */
+.ide-code-window-aspect-select {
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-dim);
   font-size: 11px;
   padding: 3px 6px;
 }
@@ -2475,7 +2614,7 @@ body {
   background: radial-gradient(circle at top left, #111827, #020617);
   color: #e5e7eb;
   resize: vertical;
-  min-height: 120px;
+  min-height: 180px; /* roughly 4:3 feel for default width */
   box-shadow:
     inset 0 0 0 1px rgba(15, 23, 42, 0.9),
     0 0 0 1px rgba(15, 23, 42, 0.9),
@@ -2553,10 +2692,17 @@ body {
   overflow: hidden;
   border: 1px solid rgba(15, 23, 42, 0.9);
   background: radial-gradient(circle at top, #020617, #020617);
+  /* Keep preview area at 4:3 aspect ratio regardless of width */
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
 }
 
 .ide-code-window-iframe {
+  position: absolute;
+  inset: 0;
   width: 100%;
+  height: 100%;
   border: none;
   background: transparent;
   display: block;
