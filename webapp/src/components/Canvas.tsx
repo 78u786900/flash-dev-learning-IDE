@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import type { Note, Section, SectionRecording } from '../types'
 import { NoteContentWithLatex } from './NoteContentWithLatex'
+import { transcribeWithGeminiFlash } from '../utils/audioTranscription'
 
 /** Convert data URL to Blob so we can use createObjectURL for reliable playback (data URLs often fail with WebM in audio elements). */
 function dataUrlToBlob(dataUrl: string): Blob | null {
@@ -56,19 +57,23 @@ interface CanvasProps {
   onUpdateSection: (sectionId: string, updater: (s: Section) => Section) => void
   onAddSection: () => void
   onSectionDone?: (title: string) => void
+  /** Kept for backward compatibility; not used in current UI. */
   onRequestDeleteSection?: (sectionId: string) => void
   onRequestDeleteRecording?: (sectionId: string, recId: string) => void
 }
 
-export function Canvas({ note, onUpdateSection, onAddSection, onSectionDone, onRequestDeleteSection, onRequestDeleteRecording }: CanvasProps) {
+export function Canvas({ note, onUpdateSection, onAddSection, onSectionDone, onRequestDeleteRecording }: CanvasProps) {
   const [editingSectionId, setEditingSectionId] = useState<string | null>(null)
   const [recordingSectionId, setRecordingSectionId] = useState<string | null>(null)
   const [recordingElapsedSeconds, setRecordingElapsedSeconds] = useState(0)
   const [pendingRecording, setPendingRecording] = useState<{ sectionId: string; blob: Blob; duration: number } | null>(null)
+  const [transcribingRecId, setTranscribingRecId] = useState<string | null>(null)
+  const [transcribingElapsedSeconds, setTranscribingElapsedSeconds] = useState(0)
   const editRef = useRef<HTMLDivElement>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const startTimeRef = useRef<number>(0)
   const recordingSectionIdRef = useRef<string | null>(null)
+  const transcribingStartRef = useRef<number>(0)
 
   useEffect(() => {
     if (!recordingSectionId) {
@@ -80,6 +85,19 @@ export function Canvas({ note, onUpdateSection, onAddSection, onSectionDone, onR
     const id = setInterval(tick, 1000)
     return () => clearInterval(id)
   }, [recordingSectionId])
+
+  useEffect(() => {
+    if (!transcribingRecId) {
+      setTranscribingElapsedSeconds(0)
+      return
+    }
+    const tick = () => {
+      setTranscribingElapsedSeconds(Math.max(0, Math.floor((Date.now() - transcribingStartRef.current) / 1000)))
+    }
+    tick()
+    const id = setInterval(tick, 1000)
+    return () => clearInterval(id)
+  }, [transcribingRecId])
 
   const startRecording = useCallback(async (sectionId: string) => {
     try {
@@ -158,6 +176,69 @@ export function Canvas({ note, onUpdateSection, onAddSection, onSectionDone, onR
     reader.onerror = () => setPendingRecording(null)
     reader.readAsDataURL(blob)
   }, [pendingRecording, onUpdateSection])
+
+  const handleTranscribeRecording = useCallback(
+    async (sectionId: string, rec: SectionRecording) => {
+      const blob = dataUrlToBlob(rec.dataUrl)
+      if (!blob) return
+      setTranscribingRecId(rec.id)
+      transcribingStartRef.current = Date.now()
+      onUpdateSection(sectionId, (s) => ({
+        ...s,
+        recordings: (s.recordings ?? []).map((r) =>
+          r.id === rec.id
+            ? {
+                ...r,
+                transcriptionStatus: 'processing',
+                transcriptError: undefined,
+              }
+            : r
+        ),
+      }))
+      try {
+        const { language, segments } = await transcribeWithGeminiFlash(blob)
+        onUpdateSection(sectionId, (s) => ({
+          ...s,
+          recordings: (s.recordings ?? []).map((r) =>
+            r.id === rec.id
+              ? {
+                  ...r,
+                  transcriptionStatus: 'done',
+                  transcriptLanguage: language,
+                  transcriptSegments: segments,
+                  transcriptError: undefined,
+                }
+              : r
+          ),
+        }))
+      } catch (err) {
+        console.error('Transcription failed', err)
+        const message = err instanceof Error ? err.message : 'Transcription failed'
+        onUpdateSection(sectionId, (s) => ({
+          ...s,
+          recordings: (s.recordings ?? []).map((r) =>
+            r.id === rec.id
+              ? {
+                  ...r,
+                  transcriptionStatus: 'error',
+                  transcriptError: message,
+                }
+              : r
+          ),
+        }))
+      } finally {
+        setTranscribingRecId((current) => (current === rec.id ? null : current))
+      }
+    },
+    [onUpdateSection]
+  )
+
+  const formatTimestamp = (seconds: number): string => {
+    const s = Math.max(0, Math.floor(seconds))
+    const m = Math.floor(s / 60)
+    const ss = (s % 60).toString().padStart(2, '0')
+    return `${m}:${ss}`
+  }
 
   useEffect(() => {
     if (editingSectionId && editRef.current) {
@@ -271,8 +352,44 @@ export function Canvas({ note, onUpdateSection, onAddSection, onSectionDone, onR
                       className="ide-recording-audio"
                       controlsList="play nodownload"
                     />
-                    {rec.duration != null && (
-                      <span className="ide-recording-duration">{rec.duration}s</span>
+                    <div className="ide-recording-meta">
+                      {rec.duration != null && (
+                        <span className="ide-recording-duration">{rec.duration}s</span>
+                      )}
+                      <button
+                        type="button"
+                        className="ide-recording-transcribe-btn"
+                        onClick={() => handleTranscribeRecording(section.id, rec)}
+                        disabled={transcribingRecId === rec.id}
+                      >
+                        {rec.transcriptionStatus === 'processing' || transcribingRecId === rec.id
+                          ? `自動轉錄中… ${transcribingElapsedSeconds}s`
+                          : rec.transcriptionStatus === 'done'
+                            ? '重新轉錄'
+                            : '自動轉錄'}
+                      </button>
+                    </div>
+                    {rec.transcriptionStatus === 'error' && rec.transcriptError && (
+                      <div className="ide-recording-transcript-error">
+                        {rec.transcriptError}
+                      </div>
+                    )}
+                    {rec.transcriptSegments && rec.transcriptSegments.length > 0 && (
+                      <div className="ide-recording-transcript-preview">
+                        <div className="ide-recording-transcript-scroll">
+                          {rec.transcriptSegments.map((seg) => (
+                            <div
+                              key={`${seg.startSeconds}-${seg.endSeconds}-${rec.id}`}
+                              className="ide-recording-transcript-row"
+                            >
+                              <span className="ide-recording-transcript-ts">
+                                {formatTimestamp(seg.startSeconds)}–{formatTimestamp(seg.endSeconds)}
+                              </span>
+                              <span className="ide-recording-transcript-text">{seg.text}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
                     )}
                   </div>
                 ))}

@@ -39,9 +39,11 @@ interface FloatingMemoProps {
   memo: CanvasOverlayMemo
   onUpdate: (id: string, patch: Partial<CanvasOverlayMemo>) => void
   onRemove: (id: string) => void
+  /** Optional callback to get maximum allowed x/y for this memo (to keep within frame). */
+  getBounds?: () => { maxX: number; maxY: number } | null
 }
 
-function FloatingMemo({ memo, onUpdate, onRemove }: FloatingMemoProps) {
+function FloatingMemo({ memo, onUpdate, onRemove, getBounds }: FloatingMemoProps) {
   const [dragging, setDragging] = useState(false)
   const [resizing, setResizing] = useState(false)
   const dragStart = useRef({ x: 0, y: 0, left: 0, top: 0 })
@@ -72,9 +74,16 @@ function FloatingMemo({ memo, onUpdate, onRemove }: FloatingMemoProps) {
     const onMove = (e: MouseEvent) => {
       const dx = e.clientX - dragStart.current.x
       const dy = e.clientY - dragStart.current.y
+      let nextX = dragStart.current.left + dx
+      let nextY = dragStart.current.top + dy
+      const bounds = getBounds?.()
+      const maxX = bounds?.maxX ?? Number.POSITIVE_INFINITY
+      const maxY = bounds?.maxY ?? Number.POSITIVE_INFINITY
+      nextX = Math.max(0, Math.min(nextX, maxX))
+      nextY = Math.max(0, Math.min(nextY, maxY))
       onUpdate(memo.id, {
-        x: Math.max(0, dragStart.current.left + dx),
-        y: Math.max(0, dragStart.current.top + dy),
+        x: nextX,
+        y: nextY,
       })
     }
     const onUp = () => setDragging(false)
@@ -154,6 +163,10 @@ interface CanvasAreaWithSelectionProps {
   onCaptureArea: (dataUrl: string) => void
   /** When true, disable text selection (for PDF/image/video); when false, allow selection for editing (notes) */
   noSelect?: boolean
+  /** Optional controlled overlays; if provided, component becomes controlled for memo state. */
+  overlays?: CanvasOverlayMemo[]
+  /** Called whenever overlays change (drag, resize, edit, add/remove). */
+  onOverlaysChange?: (next: CanvasOverlayMemo[]) => void
   children: React.ReactNode
 }
 
@@ -162,6 +175,8 @@ export function CanvasAreaWithSelection({
   onAddSection,
   onCaptureArea,
   noSelect = true,
+  overlays: controlledOverlays,
+  onOverlaysChange,
   children,
 }: CanvasAreaWithSelectionProps) {
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -177,8 +192,24 @@ export function CanvasAreaWithSelection({
   const [start, setStart] = useState<{ x: number; y: number } | null>(null)
   const [current, setCurrent] = useState<{ x: number; y: number } | null>(null)
 
-  /** Overlay memos (when tool is overlay); position relative to wrap */
-  const [overlays, setOverlays] = useState<CanvasOverlayMemo[]>([])
+  /** Overlay memos (when tool is overlay); position relative to wrap.
+   * If controlledOverlays is provided, this component acts as a controlled
+   * view of overlays and delegates updates via onOverlaysChange.
+   */
+  const [uncontrolledOverlays, setUncontrolledOverlays] = useState<CanvasOverlayMemo[]>([])
+
+  const overlays = controlledOverlays ?? uncontrolledOverlays
+
+  const updateOverlaysState = useCallback(
+    (updater: (prev: CanvasOverlayMemo[]) => CanvasOverlayMemo[]) => {
+      if (controlledOverlays != null && onOverlaysChange) {
+        onOverlaysChange(updater(controlledOverlays))
+      } else {
+        setUncontrolledOverlays(prev => updater(prev))
+      }
+    },
+    [controlledOverlays, onOverlaysChange]
+  )
 
 
   useEffect(() => {
@@ -350,26 +381,28 @@ export function CanvasAreaWithSelection({
   /** Add overlay memo at position (relative to wrap) */
   const handleOverlayAreaClick = useCallback(
     (e: React.MouseEvent) => {
-      if (tool !== 'overlay' || !wrapRef.current) return
-      const wrap = wrapRef.current.getBoundingClientRect()
-      const x = e.clientX - wrap.left + wrapRef.current.scrollLeft
-      const y = e.clientY - wrap.top + wrapRef.current.scrollTop
+      if (tool !== 'overlay' || !contentRef.current) return
+      const content = contentRef.current
+      const rect = content.getBoundingClientRect()
+      // Coordinates in content scroll space so memos stay anchored to the page even when scrolled.
+      const x = e.clientX - rect.left + content.scrollLeft
+      const y = e.clientY - rect.top + content.scrollTop
       const id = `memo-${Date.now()}-${Math.random().toString(36).slice(2)}`
-      setOverlays((prev) => [
+      updateOverlaysState((prev) => [
         ...prev,
         { id, x: x - DEFAULT_MEMO_WIDTH / 2, y: y - 24, width: DEFAULT_MEMO_WIDTH, height: DEFAULT_MEMO_HEIGHT, content: '' },
       ])
     },
-    [tool]
+    [tool, updateOverlaysState]
   )
 
   const updateOverlay = useCallback((id: string, patch: Partial<CanvasOverlayMemo>) => {
-    setOverlays((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)))
-  }, [])
+    updateOverlaysState((prev) => prev.map((m) => (m.id === id ? { ...m, ...patch } : m)))
+  }, [updateOverlaysState])
 
   const removeOverlay = useCallback((id: string) => {
-    setOverlays((prev) => prev.filter((m) => m.id !== id))
-  }, [])
+    updateOverlaysState((prev) => prev.filter((m) => m.id !== id))
+  }, [updateOverlaysState])
 
   let selectionRect: { left: number; top: number; width: number; height: number } | null = null
   if (start && current && wrapRef.current) {
@@ -389,6 +422,28 @@ export function CanvasAreaWithSelection({
       <div ref={wrapRef} className="ide-canvas-area-wrap">
         <div ref={contentRef} className={`ide-canvas-area ${noSelect ? 'ide-canvas-no-select' : ''}`}>
           {children}
+
+          {/* Memos (positioned relative to content so they scroll with it) */}
+          {overlays.length > 0 && (
+            <div className="ide-canvas-memos-layer" aria-hidden>
+              {overlays.map((memo) => (
+                <FloatingMemo
+                  key={memo.id}
+                  memo={memo}
+                  onUpdate={updateOverlay}
+                  onRemove={removeOverlay}
+                  getBounds={() => {
+                    const content = contentRef.current
+                    if (!content) return null
+                    return {
+                      maxX: Math.max(0, content.scrollWidth - memo.width),
+                      maxY: Math.max(0, content.scrollHeight - memo.height),
+                    }
+                  }}
+                />
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Selection overlay: only active when tool is capture */}
@@ -429,20 +484,6 @@ export function CanvasAreaWithSelection({
             onClick={handleOverlayAreaClick}
             aria-hidden
           />
-        )}
-
-        {/* Memos (positioned relative to wrap) */}
-        {overlays.length > 0 && (
-          <div className="ide-canvas-memos-layer" aria-hidden>
-            {overlays.map((memo) => (
-              <FloatingMemo
-                key={memo.id}
-                memo={memo}
-                onUpdate={updateOverlay}
-                onRemove={removeOverlay}
-              />
-            ))}
-          </div>
         )}
 
         <CanvasToolbar

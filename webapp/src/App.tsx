@@ -7,7 +7,7 @@ import { Header } from './components/Header'
 import { Sidebar } from './components/Sidebar'
 import { Canvas } from './components/Canvas'
 import { FileViewer } from './components/FileViewer'
-import { CanvasAreaWithSelection } from './components/CanvasAreaWithSelection'
+import { CanvasAreaWithSelection, type CanvasOverlayMemo } from './components/CanvasAreaWithSelection'
 import { ChatPanel } from './components/ChatPanel'
 import type { CanvasFileType } from './components/CanvasToolbar'
 import { StatusBar } from './components/StatusBar'
@@ -21,6 +21,8 @@ import {
   saveTimeline,
   loadChatThreads,
   saveChatThreads,
+  loadCanvasOverlays,
+  saveCanvasOverlays,
   type StoredChatMessage,
   type StoredChatThread,
 } from './storage/persistence'
@@ -127,6 +129,26 @@ function App() {
   const lastPdfFileIdForViewing = useRef<string | null>(null)
   /** Ref so PDF load callbacks only apply when this file is still active (avoids stale overwrites). */
   const activeFileIdRef = useRef<string | null>(null)
+  /** Overlay memos on the central canvas, keyed by note/file. */
+  const [canvasOverlaysByKey, setCanvasOverlaysByKey] = useState<Record<string, CanvasOverlayMemo[]>>(
+    () => {
+      const stored = loadCanvasOverlays()
+      const cast: Record<string, CanvasOverlayMemo[]> = {}
+      for (const [key, value] of Object.entries(stored)) {
+        if (Array.isArray(value)) {
+          cast[key] = value.map((v: any) => ({
+            id: String(v.id ?? `memo-${Date.now()}`),
+            x: typeof v.x === 'number' ? v.x : 0,
+            y: typeof v.y === 'number' ? v.y : 0,
+            width: typeof v.width === 'number' ? v.width : 220,
+            height: typeof v.height === 'number' ? v.height : 140,
+            content: typeof v.content === 'string' ? v.content : '',
+          }))
+        }
+      }
+      return cast
+    }
+  )
 
   const logAction = useCallback((type: TimelineAction['type'], label: string) => {
     setTimeline(prev => [...prev.slice(-99), makeTimelineAction(type, label)])
@@ -463,6 +485,22 @@ function App() {
   }, [chatThreads])
 
   useEffect(() => {
+    // Persist overlay memos positions/content
+    const plain: Record<string, unknown[]> = {}
+    for (const [key, arr] of Object.entries(canvasOverlaysByKey)) {
+      plain[key] = arr.map((m) => ({
+        id: m.id,
+        x: m.x,
+        y: m.y,
+        width: m.width,
+        height: m.height,
+        content: m.content,
+      }))
+    }
+    saveCanvasOverlays(plain)
+  }, [canvasOverlaysByKey])
+
+  useEffect(() => {
     if (activeFile?.name?.toLowerCase().endsWith('.pdf') && activeFile.id !== pdfFileIdForTexts) {
       setPdfPageTexts({})
       setPdfFileIdForTexts(null)
@@ -533,6 +571,17 @@ function App() {
   const activeThread = chatThreads.find(t => t.id === activeChatId) ?? chatThreads[0]
   const chatMessages: StoredChatMessage[] = activeThread?.messages ?? [DEFAULT_CHAT_WELCOME]
 
+  // Key for storing/retrieving canvas overlays: tie to active note or file.
+  const overlayKey = !activeFileId
+    ? `note:${displayNote.id}`
+    : activeFile
+      ? activeFile.name.toLowerCase().endsWith('.pdf') && viewingPdfPageNumber
+        ? `file:${activeFile.id}:page:${viewingPdfPageNumber}`
+        : `file:${activeFile.id}`
+      : null
+  const currentCanvasOverlays: CanvasOverlayMemo[] =
+    (overlayKey && canvasOverlaysByKey[overlayKey]) ? canvasOverlaysByKey[overlayKey] : []
+
   const handleToolAction = useCallback((action: ToolResultAction) => {
     if (action.type === 'add_section') {
       addSectionWithContent(action.noteId, action.title, action.content)
@@ -584,6 +633,16 @@ function App() {
             onAddSection={showCanvas ? () => addSection(displayNote.id) : undefined}
             onCaptureArea={setAttachedAreaImage}
             noSelect={!showCanvas}
+            overlays={overlayKey ? currentCanvasOverlays : undefined}
+            onOverlaysChange={
+              overlayKey
+                ? (next) =>
+                    setCanvasOverlaysByKey((prev) => ({
+                      ...prev,
+                      [overlayKey]: next,
+                    }))
+                : undefined
+            }
           >
             {showCanvas ? (
               <Canvas

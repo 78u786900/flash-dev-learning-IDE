@@ -872,8 +872,9 @@ body {
 
 .ide-recording-card {
   display: inline-flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
   padding: 10px 14px;
   background: #333336;
   border-radius: 8px;
@@ -946,6 +947,66 @@ body {
   border-style: dashed;
   border-color: #4a4a4e;
   background: #2e2e32;
+}
+
+.ide-recording-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: #e5e5e8;
+}
+
+.ide-recording-transcribe-btn {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 0;
+  background: #2563eb;
+  color: #f9fafb;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.ide-recording-transcribe-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.ide-recording-transcript-preview {
+  margin-top: 4px;
+  border-radius: 6px;
+  background: #27272f;
+  padding: 6px 8px;
+}
+
+.ide-recording-transcript-scroll {
+  max-height: 120px;
+  overflow-y: auto;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.ide-recording-transcript-row + .ide-recording-transcript-row {
+  margin-top: 4px;
+}
+
+.ide-recording-transcript-ts {
+  display: inline-block;
+  min-width: 72px;
+  color: #9ca3af;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+.ide-recording-transcript-text {
+  margin-left: 4px;
+}
+
+.ide-recording-transcript-error {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #f97373;
 }
 
 .ide-recording-pending-label {

@@ -1,7 +1,23 @@
+export interface TranscriptSegment {
+  startSeconds: number
+  endSeconds: number
+  text: string
+}
+
+export type TranscriptionStatus = 'idle' | 'processing' | 'done' | 'error'
+
 export interface SectionRecording {
   id: string
   dataUrl: string
   duration?: number
+  /** Transcription workflow state for this recording. */
+  transcriptionStatus?: TranscriptionStatus
+  /** Auto-detected language code for this recording (e.g. "zh-TW", "en"). */
+  transcriptLanguage?: string
+  /** Detailed transcript with timestamps for this recording. */
+  transcriptSegments?: TranscriptSegment[]
+  /** Last error message from transcription, if any. */
+  transcriptError?: string
 }
 
 export interface Section {

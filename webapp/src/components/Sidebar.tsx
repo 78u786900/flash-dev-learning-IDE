@@ -13,6 +13,7 @@ interface SidebarProps {
   onDropFiles: (files: File[]) => void
   onRenameFile?: (id: string, newName: string) => void
   onDeleteFile?: (id: string) => void
+  /** Deprecated: keep in type for compatibility, but not used in UI. */
   onRequestDeleteNote?: (noteId: string) => void
 }
 
@@ -51,7 +52,6 @@ export function Sidebar({
   onDropFiles,
   onRenameFile,
   onDeleteFile,
-  onRequestDeleteNote,
 }: SidebarProps) {
   const [newNoteName, setNewNoteName] = useState('')
   const [outlineOpen, setOutlineOpen] = useState(true)

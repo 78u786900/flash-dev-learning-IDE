@@ -10,6 +10,7 @@ const KEYS = {
   NOTES: 'learning_ide_notes',
   TIMELINE: 'learning_ide_timeline',
   CHAT: 'learning_ide_chat',
+  CANVAS_OVERLAYS: 'learning_ide_canvas_overlays',
 } as const
 
 const TIMELINE_CAP = 200
@@ -41,6 +42,7 @@ export interface StoredChatThread {
 let notesSaveTimer: ReturnType<typeof setTimeout> | null = null
 let timelineSaveTimer: ReturnType<typeof setTimeout> | null = null
 let chatSaveTimer: ReturnType<typeof setTimeout> | null = null
+let overlaysSaveTimer: ReturnType<typeof setTimeout> | null = null
 
 function safeParse<T>(key: string, fallback: T): T {
   try {
@@ -176,5 +178,20 @@ export function saveChatThreads(threads: StoredChatThread[]): void {
       .slice(-CHAT_CAP)
       .map((t) => ({ ...t, messages: t.messages.slice(-CHAT_CAP) }))
     safeSet(KEYS.CHAT, trimmed)
+  }, DEBOUNCE_MS)
+}
+
+/** Load canvas overlays (memo positions) from storage, keyed by note/file id. */
+export function loadCanvasOverlays(): Record<string, unknown[]> {
+  const data = safeParse<Record<string, unknown[]>>(KEYS.CANVAS_OVERLAYS, {})
+  return data && typeof data === 'object' ? data : {}
+}
+
+/** Save canvas overlays (debounced). */
+export function saveCanvasOverlays(data: Record<string, unknown[]>): void {
+  if (overlaysSaveTimer) clearTimeout(overlaysSaveTimer)
+  overlaysSaveTimer = setTimeout(() => {
+    overlaysSaveTimer = null
+    safeSet(KEYS.CANVAS_OVERLAYS, data)
   }, DEBOUNCE_MS)
 }
