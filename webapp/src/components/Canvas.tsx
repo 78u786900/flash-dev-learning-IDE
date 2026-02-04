@@ -81,7 +81,6 @@ export function Canvas({
   const [transcribingRecId, setTranscribingRecId] = useState<string | null>(null)
   const [transcribingElapsedSeconds, setTranscribingElapsedSeconds] = useState(0)
   const [generatingCodeWindowId, setGeneratingCodeWindowId] = useState<string | null>(null)
-  const [inlineError, setInlineError] = useState<string | null>(null)
   const [refreshNonceById, setRefreshNonceById] = useState<Record<string, number>>({})
   const editRef = useRef<HTMLDivElement>(null)
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)

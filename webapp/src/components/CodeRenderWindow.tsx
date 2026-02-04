@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef, useEffect } from 'react'
+import { useMemo, useRef, useEffect } from 'react'
 import type { CodeWindowAspectRatio, SectionCodeWindow } from '../types'
 
 interface CodeRenderWindowProps {
