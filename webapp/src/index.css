@@ -32,6 +32,20 @@
   scrollbar-width: thin;
   scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
+
+/* Global button reset for step headers */
+button.ide-step-header {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
 *::-webkit-scrollbar {
   width: var(--scrollbar-width);
   height: var(--scrollbar-width);
@@ -807,10 +821,28 @@ body {
   border: 1px solid transparent;
   border-radius: 6px;
   padding: 8px 12px;
+  transition: border-color 0.3s ease, background-color 0.3s ease;
 }
 
 .ide-section:hover {
   border-color: var(--border);
+}
+
+.ide-section--highlighted {
+  border-color: var(--accent);
+  background-color: rgba(139, 92, 246, 0.08);
+  animation: section-highlight-pulse 0.5s ease-out;
+}
+
+@keyframes section-highlight-pulse {
+  0% {
+    transform: scale(1.01);
+    box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.3);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(139, 92, 246, 0);
+  }
 }
 
 .ide-section-header {
@@ -1844,6 +1876,7 @@ body {
   flex-shrink: 0;
   transition: background 0.15s ease, color 0.15s ease;
 }
+
 .ide-chatbar-btn:hover {
   background: var(--bg-hover);
   color: var(--text);
@@ -1867,6 +1900,7 @@ body {
 .ide-chatbar {
   display: flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 8px;
   /* Slightly larger horizontal padding so the send button doesn't sit on the card edge */
   padding: 8px 16px 10px;
@@ -1882,7 +1916,8 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 6px 4px 6px 0;
+  /* Remove extra clickable / highlight area on the right of the caret */
+  padding: 6px 0 6px 0;
   border: none;
   border-radius: 0;
   background: transparent;
@@ -2075,26 +2110,31 @@ body {
   padding: 16px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
 }
 
 .ide-chat-msg {
-  padding: 10px 12px;
-  border-radius: 8px;
   font-size: 13px;
-  line-height: 1.5;
+  line-height: 1.6;
+  width: 100%;
 }
 
+/* User message: has border and background */
 .ide-chat-msg.user {
-  background: var(--accent);
-  color: #fff;
-  margin-left: 24px;
-}
-
-.ide-chat-msg.agent {
   background: var(--bg-tertiary);
   color: var(--text);
-  margin-right: 24px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+
+/* Agent message: no border, no background, full width */
+.ide-chat-msg.agent {
+  background: transparent;
+  color: var(--text);
+  padding: 0;
+  border: none;
+  border-radius: 0;
 }
 
 /* Cursor-style agent run block: real-time tool log + result */
@@ -3127,4 +3167,438 @@ body {
 @keyframes blink-cursor {
   0%, 100% { opacity: 1; }
   50% { opacity: 0; }
+}
+
+/* ================================================
+   LINEAR AGENT STEPS - Cursor-like streaming display
+   ================================================ */
+
+/* RESET ALL - ensure no borders on any step elements */
+.ide-steps-container,
+.ide-steps-container *,
+.ide-step,
+.ide-step *,
+.ide-step-header,
+.ide-step-content,
+.ide-step-icon,
+.ide-step-type,
+.ide-step-preview,
+.ide-step-chevron,
+.ide-step-inline {
+  border: none !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+/* Container for steps (live or stored) */
+.ide-steps-container {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 12px;
+  background: transparent;
+}
+
+/* Live header while agent is running */
+.ide-live-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 12px;
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.ide-live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: ide-live-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes ide-live-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.85); }
+}
+
+/* Individual step block - NO border by default */
+.ide-step {
+  border: none !important;
+  border-radius: 4px;
+  background: none !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+  margin: 2px 0;
+  padding: 0;
+  transition: background-color 0.15s ease;
+}
+
+.ide-step:hover {
+  background-color: rgba(255, 255, 255, 0.03) !important;
+}
+
+.ide-step--live {
+  background-color: rgba(59, 130, 246, 0.06) !important;
+}
+
+/* Inline step (layer/skill/model) - no expand */
+.ide-step-inline {
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 2px 0;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+/* Expanded/Collapsed states */
+.ide-step--expanded {
+  background-color: rgba(255, 255, 255, 0.02) !important;
+}
+
+.ide-step--collapsed .ide-step-content {
+  display: none;
+}
+
+/* Step header (clickable for collapse) - RESET ALL BUTTON STYLES */
+.ide-step-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  margin: 0;
+  width: 100%;
+  background: none !important;
+  background-color: transparent !important;
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  color: var(--text);
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  text-align: left;
+  cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  border-radius: 4px;
+}
+
+.ide-step-header:hover {
+  color: var(--text);
+  background-color: rgba(255, 255, 255, 0.05) !important;
+}
+
+.ide-step-header:focus {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+/* Thinking step header */
+.ide-step--thinking .ide-step-header {
+  padding: 8px 12px;
+  color: #a78bfa;
+}
+
+.ide-step-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+
+.ide-step-type {
+  font-weight: 500;
+  color: var(--text);
+  font-size: 12px;
+  /* Keep type label (especially purple thinking title) on one row */
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 0;
+  max-width: 65%;
+}
+
+.ide-step-preview {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-weight: 400;
+  font-size: 11px;
+  margin-left: 8px;
+}
+
+.ide-step-status {
+  font-size: 12px;
+  font-weight: 600;
+  margin-left: 4px;
+}
+
+.ide-step-status--ok {
+  color: #22c55e;
+}
+
+.ide-step-status--error {
+  color: #f43f5e;
+}
+
+.ide-step-result-badge {
+  margin-left: 6px;
+  font-weight: 600;
+}
+
+.ide-step-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--text-dim);
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+
+.ide-step-chevron--collapsed {
+  transform: rotate(-90deg);
+}
+
+.ide-step-header:hover .ide-step-chevron {
+  color: var(--text);
+}
+
+/* Step content (expandable) - no height limit, absolutely no border */
+.ide-step-content,
+.ide-steps-container .ide-step-content,
+.ide-chat-msg .ide-step-content {
+  /* Smaller left padding so expanded content貼近 header */
+  padding: 4px 8px 8px 14px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  background: none !important;
+  background-color: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+.ide-step-args {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+  padding: 6px 8px;
+  background: rgba(99, 102, 241, 0.05);
+  border-radius: 4px;
+}
+
+.ide-step-arg {
+  background: transparent;
+  padding: 0;
+  font-size: 11px;
+  color: var(--text-dim);
+  display: flex;
+  gap: 4px;
+}
+
+.ide-step-arg-key {
+  color: #818cf8;
+  font-weight: 500;
+}
+
+.ide-step-result {
+  padding: 0;
+  background: transparent;
+  color: var(--text);
+  line-height: 1.6;
+}
+
+/* Step type colors */
+
+/* THINKING: has left border and background */
+.ide-steps-container .ide-step.ide-step--thinking,
+.ide-step.ide-step--thinking {
+  background: rgba(167, 139, 250, 0.05) !important;
+  border: none !important;
+  border-left: 3px solid #a78bfa !important;
+  border-radius: 0 4px 4px 0 !important;
+  margin: 6px 0;
+  padding: 0;
+}
+
+.ide-step--thinking .ide-step-header {
+  color: #a78bfa;
+  padding: 8px 12px;
+}
+
+.ide-step--thinking .ide-step-type {
+  color: #a78bfa;
+}
+
+.ide-step--thinking .ide-step-chevron {
+  color: #a78bfa;
+}
+
+.ide-step--thinking .ide-step-content {
+  background: transparent !important;
+  color: #d4d4d8;
+  font-style: normal;
+  /* Match smaller left margin for thinking content as well */
+  padding: 0 12px 10px 14px;
+  line-height: 1.7;
+}
+
+/* Thinking collapsed - show preview */
+.ide-step--thinking.ide-step--collapsed .ide-step-header {
+  padding: 6px 12px;
+}
+
+/* Tool call styling */
+.ide-step--tool-call .ide-step-header {
+  color: var(--text);
+}
+
+.ide-step--tool-call .ide-step-type {
+  color: #60a5fa;
+}
+
+.ide-step--tool-call .ide-step-chevron {
+  color: #60a5fa;
+}
+
+.ide-step--tool-call .ide-step-content {
+  background: transparent !important;
+  padding: 4px 8px 8px 28px;
+}
+
+/* Tool result success */
+.ide-step--success .ide-step-type {
+  color: #22c55e;
+}
+
+.ide-step--success .ide-step-chevron {
+  color: #22c55e;
+}
+
+/* Tool result error */
+.ide-step--error .ide-step-type {
+  color: #f43f5e;
+}
+
+.ide-step--error .ide-step-chevron {
+  color: #f43f5e;
+}
+
+/* Layer/Model: inline, small, dim */
+.ide-step--layer,
+.ide-step--model,
+.ide-step--skill {
+  margin: 0;
+  padding: 0;
+}
+
+.ide-step--layer .ide-step-inline,
+.ide-step--model .ide-step-inline {
+  color: var(--text-dim);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 4px 0;
+}
+
+/* Skill: highlighted */
+.ide-step--skill .ide-step-inline {
+  color: #fbbf24;
+  font-size: 11px;
+}
+
+/* Message: cyan */
+.ide-step--message .ide-step-type {
+  color: #22d3ee;
+}
+
+/* Log: dim */
+.ide-step--log .ide-step-header {
+  color: var(--text-dim);
+  font-size: 11px;
+  padding: 4px 8px;
+}
+
+/* Streaming text display (for live thinking/reply) */
+.ide-streaming {
+  padding: 10px 12px;
+  margin: 6px 0;
+  background: transparent;
+  border-radius: 4px;
+  border: none;
+  font-size: 12px;
+  line-height: 1.6;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+/* Thinking stream has left border (like thinking steps) */
+.ide-streaming--thinking {
+  background: rgba(167, 139, 250, 0.05);
+  border: none;
+  border-left: 3px solid #a78bfa;
+  border-radius: 0 4px 4px 0;
+}
+
+.ide-streaming-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: #a78bfa;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ide-streaming-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+}
+
+.ide-streaming-cursor {
+  display: inline-block;
+  color: #3b82f6;
+  animation: blink-cursor 0.8s steps(2) infinite;
+  margin-left: 2px;
+}
+
+.ide-streaming--thinking .ide-streaming-cursor {
+  color: #a78bfa;
+}
+
+/* Live message styling */
+.ide-chat-msg--live {
+  background: transparent !important;
+  padding: 0 !important;
+  border: none !important;
+}
+
+/* Agent final text */
+.ide-chat-msg-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.6;
+}
+
+/* Agent message text directly in flow */
+.ide-chat-msg.agent .ide-chat-msg-text {
+  padding: 4px 0;
+}
+
+/* User message text */
+.ide-chat-msg.user .ide-chat-msg-text {
+  padding: 0;
 }

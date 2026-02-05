@@ -71,6 +71,10 @@ interface CanvasProps {
   onRequestDeleteCodeWindow?: (sectionId: string, codeWindowId: string) => void
   /** Callback for LaTeX/PlantUML render errors (auto-fix feature) */
   onRenderError?: (error: RenderErrorWithContext) => void
+  /** Section ID to focus/scroll to (from AI tool actions) */
+  focusSectionId?: string | null
+  /** Callback to clear focusSectionId after handling */
+  onFocusHandled?: () => void
 }
 
 export function Canvas({
@@ -81,6 +85,8 @@ export function Canvas({
   onRequestDeleteRecording,
   onRequestDeleteCodeWindow,
   onRenderError,
+  focusSectionId,
+  onFocusHandled,
 }: CanvasProps) {
   const [editingSectionId, setEditingSectionId] = useState<string | null>(null)
   const [editingCodeWindowId, setEditingCodeWindowId] = useState<string | null>(null)
@@ -120,6 +126,23 @@ export function Canvas({
     const id = setInterval(tick, 1000)
     return () => clearInterval(id)
   }, [transcribingRecId])
+
+  // Scroll to focused section when AI makes changes
+  useEffect(() => {
+    if (!focusSectionId) return
+    // Small delay to ensure DOM is updated
+    const timer = setTimeout(() => {
+      const sectionEl = document.querySelector(`[data-section-id="${focusSectionId}"]`)
+      if (sectionEl) {
+        sectionEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        // Add a brief highlight effect
+        sectionEl.classList.add('ide-section--highlighted')
+        setTimeout(() => sectionEl.classList.remove('ide-section--highlighted'), 2000)
+      }
+      onFocusHandled?.()
+    }, 100)
+    return () => clearTimeout(timer)
+  }, [focusSectionId, onFocusHandled])
 
   const startRecording = useCallback(async (sectionId: string) => {
     try {
@@ -292,7 +315,7 @@ export function Canvas({
   return (
     <div className="ide-canvas">
       {note.sections.map(section => (
-        <section key={section.id} className="ide-section">
+        <section key={section.id} className="ide-section" data-section-id={section.id}>
           <div className="ide-section-header">
             <input
               type="checkbox"

@@ -63,7 +63,8 @@ h1 {
   color: #888;
 }
 
-button {
+/* Default button styles - EXCLUDE step headers */
+button:not(.ide-step-header):not(.ide-chatbar-btn):not(.ide-chatbar-pill):not(.ide-chatbar-select):not(.ide-chatbar-send) {
   border-radius: 8px;
   border: 1px solid transparent;
   padding: 0.6em 1.2em;
@@ -74,12 +75,23 @@ button {
   cursor: pointer;
   transition: border-color 0.25s;
 }
-button:hover {
+button:not(.ide-step-header):not(.ide-chatbar-btn):not(.ide-chatbar-pill):not(.ide-chatbar-select):not(.ide-chatbar-send):hover {
   border-color: #646cff;
 }
-button:focus,
-button:focus-visible {
+button:not(.ide-step-header):focus,
+button:not(.ide-step-header):focus-visible {
   outline: 4px auto -webkit-focus-ring-color;
+}
+
+/* Reset step header buttons completely */
+button.ide-step-header {
+  border: none !important;
+  border-radius: 0 !important;
+  padding: 4px 0 !important;
+  background: none !important;
+  background-color: transparent !important;
+  outline: none !important;
+  box-shadow: none !important;
 }
 
 @media (prefers-color-scheme: light) {

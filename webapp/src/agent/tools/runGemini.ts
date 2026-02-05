@@ -26,7 +26,7 @@ export function createCallGemini(apiKey: string, modelApiId: string): CallGemini
         body: JSON.stringify({
           contents: [{ role: 'user', parts }],
           systemInstruction: { parts: [{ text: system }] },
-          generationConfig: { temperature: 0.5, maxOutputTokens: 2048 },
+          generationConfig: { temperature: 0.5, maxOutputTokens: 65536 },
         }),
       }
     )

@@ -1,24 +1,14 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import type { AgentContext, ToolResultAction } from '../agent/types'
 import { runAgentChatWithTools, type RenderError } from '../agent/geminiWithTools'
 import { chatLogToTerminal } from '../agent/chatLog'
-import type { StoredChatMessage } from '../storage/persistence'
+import type { StoredChatMessage, AgentStep, AgentStepType } from '../storage/persistence'
 import type { RenderErrorWithContext } from './Canvas'
 
 const MAX_IMAGE_DATAURL_LENGTH = 800 * 1024 // ~800KB; skip storing if larger to avoid localStorage quota
 
 export type ChatMode = 'agent' | 'ask'
 
-/**
- * Supported Gemini models in the UI.
- *
- * REST model IDs (from https://ai.google.dev/gemini-api/docs/models):
- * - gemini-2.0-flash       → Gemini 2 Flash
- * - gemini-2.5-flash       → Gemini 2.5 Flash
- * - gemini-2.5-pro         → Gemini 2.5 Pro
- * - gemini-3-flash-preview → Gemini 3 Flash (preview)
- * - gemini-3-pro-preview   → Gemini 3 Pro (preview)
- */
 export type GeminiModel =
   | 'gemini-2-flash'
   | 'gemini-2.5-flash'
@@ -67,7 +57,7 @@ async function callGeminiAsk(
       body: JSON.stringify({
         systemInstruction: { parts: [{ text: systemInstruction }] },
         contents: history,
-        generationConfig: { temperature: 0.7, maxOutputTokens: 2048 },
+        generationConfig: { temperature: 0.7, maxOutputTokens: 65536 },
       }),
     }
   )
@@ -84,27 +74,67 @@ export interface AgentRunInfo {
   logs: string[]
   toolCalls?: Array<{ name: string; args: Record<string, unknown>; result: string; success: boolean }>
   error?: string
-  /** Duration in seconds for thinking time display */
   thinkingDuration?: number
-  /** Timestamp when run started */
   startedAt?: number
+  /** Parsed steps for linear display */
+  steps?: AgentStep[]
+}
+
+/** Parse a log line into a step */
+function parseLogToStep(line: string, id: string): AgentStep {
+  const ts = Date.now()
+  
+  // [Thinking] ...
+  const thinkingMatch = /^\[Thinking\]\s*(.+)$/s.exec(line)
+  if (thinkingMatch) {
+    return { id, type: 'thinking', content: thinkingMatch[1], ts }
+  }
+  
+  // [Tool] toolName(...) or [Tool] toolName → ok/error: ...
+  const toolCallMatch = /^\[Tool\]\s*(\w+)\s*\(([^)]*)\)/.exec(line)
+  if (toolCallMatch) {
+    return { id, type: 'tool_call', content: line.replace(/^\[Tool\]\s*/, ''), toolName: toolCallMatch[1], ts }
+  }
+  
+  const toolResultMatch = /^\[Tool\]\s*(\w+)\s*→\s*(ok|error):\s*(.+)$/s.exec(line)
+  if (toolResultMatch) {
+    return { id, type: 'tool_result', content: toolResultMatch[3], toolName: toolResultMatch[1], success: toolResultMatch[2] === 'ok', ts }
+  }
+  
+  // [Layer] ...
+  const layerMatch = /^\[Layer\]\s*(.+)$/.exec(line)
+  if (layerMatch) {
+    return { id, type: 'layer', content: layerMatch[1], ts }
+  }
+  
+  // [Skill] ...
+  const skillMatch = /^\[Skill\]\s*(.+)$/.exec(line)
+  if (skillMatch) {
+    return { id, type: 'skill', content: skillMatch[1], ts }
+  }
+  
+  // [Model] ...
+  const modelMatch = /^\[Model\]\s*(.+)$/.exec(line)
+  if (modelMatch) {
+    return { id, type: 'model', content: modelMatch[1], ts }
+  }
+  
+  // Default: log
+  return { id, type: 'log', content: line, ts }
 }
 
 interface ChatPanelProps {
   agentContext?: AgentContext
-  /** Persisted chat history (from App); controlled. */
   messages?: StoredChatMessage[]
   onMessagesChange?: (updater: (prev: StoredChatMessage[]) => StoredChatMessage[]) => void
   onToolAction?: (action: ToolResultAction) => void
   attachedImage?: string | null
   onClearAttached?: () => void
-  /** Optional: multi-chat tabs */
   chatTabs?: { id: string; title: string }[]
   activeChatId?: string
   onSelectChat?: (id: string) => void
   onRequestDeleteChat?: (id: string) => void
   onNewChat?: () => void
-  /** Render errors from Canvas (LaTeX/PlantUML) for agent auto-fix */
   pendingRenderErrors?: RenderErrorWithContext[]
   onClearRenderErrors?: () => void
 }
@@ -132,22 +162,26 @@ export function ChatPanel({
   const setMessages = onMessagesChange ?? setLocalMessages
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  /** Live log lines while agent is running (Cursor-style real-time stream) */
-  const [liveAgentRun, setLiveAgentRun] = useState<{ logs: string[]; startedAt: number } | null>(null)
-  /** Live streaming text (typewriter effect) */
+  
+  /** Live steps while agent is running - displayed inline */
+  const [liveSteps, setLiveSteps] = useState<AgentStep[]>([])
+  /** Live streaming text (for current thinking/reply) */
   const [streamingText, setStreamingText] = useState<{ text: string; isThinking: boolean } | null>(null)
-  /** Elapsed time for live agent run display */
+  /** Which step IDs are expanded (collapsed by default after new step) */
+  const [expandedSteps, setExpandedSteps] = useState<Set<string>>(new Set())
+  /** Current live step ID (always expanded) */
+  const [currentLiveStepId, setCurrentLiveStepId] = useState<string | null>(null)
+  /** Run start time for duration display */
+  const [runStartTime, setRunStartTime] = useState<number | null>(null)
+  /** Elapsed time */
   const [elapsedTime, setElapsedTime] = useState<number>(0)
-  /** Collapsed state for agent run blocks */
-  const [collapsedRuns, setCollapsedRuns] = useState<Set<number>>(new Set())
-  /** Image attached via chat bar (upload or paste); takes precedence over canvas attachedImage when sending. */
+  
   const [pendingImage, setPendingImage] = useState<string | null>(null)
   const [dropdownOpen, setDropdownOpen] = useState<'mode' | 'model' | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const liveRunEndRef = useRef<HTMLDivElement>(null)
-  const tabsScrollRef = useRef<HTMLDivElement>(null)
   const chatbarRef = useRef<HTMLDivElement>(null)
+  const stepIdCounter = useRef(0)
 
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
@@ -158,7 +192,6 @@ export function ChatPanel({
     return () => document.removeEventListener('click', onDocClick)
   }, [])
 
-  /** Image that will be sent with the next message (chat-bar upload/paste or canvas capture). */
   const imageToSend = pendingImage ?? attachedImage
 
   const clearAttachedImage = () => {
@@ -192,33 +225,62 @@ export function ChatPanel({
   const apiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined
   const hasApiKey = Boolean(apiKey?.trim())
 
+  // Auto-scroll when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  }, [messages, liveSteps.length, streamingText])
 
+  // Update elapsed time
   useEffect(() => {
-    if (liveAgentRun?.logs?.length) liveRunEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [liveAgentRun?.logs?.length])
-
-  // When number of chat tabs changes (e.g. new chat created), auto-scroll to the rightmost end
-  useEffect(() => {
-    if (!chatTabs || !chatTabs.length) return
-    const el = tabsScrollRef.current
-    if (!el) return
-    el.scrollTo({ left: el.scrollWidth, behavior: 'smooth' })
-  }, [chatTabs?.length])
-
-  // Update elapsed time while agent is running
-  useEffect(() => {
-    if (!liveAgentRun) {
+    if (!runStartTime) {
       setElapsedTime(0)
       return
     }
     const interval = setInterval(() => {
-      setElapsedTime(Math.floor((Date.now() - liveAgentRun.startedAt) / 1000))
+      setElapsedTime(Math.floor((Date.now() - runStartTime) / 1000))
     }, 1000)
     return () => clearInterval(interval)
-  }, [liveAgentRun])
+  }, [runStartTime])
+
+  // When number of chat tabs changes, auto-scroll to rightmost
+  useEffect(() => {
+    if (!chatTabs || !chatTabs.length) return
+  }, [chatTabs?.length])
+
+  /** Generate unique step ID */
+  const genStepId = useCallback(() => {
+    stepIdCounter.current += 1
+    return `step-${Date.now()}-${stepIdCounter.current}`
+  }, [])
+
+  /** Toggle step expansion */
+  const toggleStep = useCallback((stepId: string) => {
+    setExpandedSteps(prev => {
+      const next = new Set(prev)
+      if (next.has(stepId)) {
+        next.delete(stepId)
+      } else {
+        next.add(stepId)
+      }
+      return next
+    })
+  }, [])
+
+  /** Add a new live step, collapsing previous one */
+  const addLiveStep = useCallback((step: AgentStep) => {
+    setLiveSteps(prev => [...prev, step])
+    // Collapse previous live step
+    if (currentLiveStepId) {
+      setExpandedSteps(prev => {
+        const next = new Set(prev)
+        next.delete(currentLiveStepId)
+        return next
+      })
+    }
+    // Expand new step
+    setExpandedSteps(prev => new Set(prev).add(step.id))
+    setCurrentLiveStepId(step.id)
+  }, [currentLiveStepId])
 
   const send = async () => {
     const text = input.trim()
@@ -231,7 +293,11 @@ export function ChatPanel({
     clearAttachedImage()
     setLoading(true)
     setError(null)
+    setLiveSteps([])
+    setExpandedSteps(new Set())
+    setCurrentLiveStepId(null)
     const imageToSendThisTurn = imageToSend
+    
     try {
       if (!hasApiKey) {
         setMessages(prev => [...prev, { role: 'agent', text: '請喺 .env 設定 VITE_GEMINI_API_KEY 後先可以用 AI。' }])
@@ -244,11 +310,12 @@ export function ChatPanel({
         role: m.role === 'user' ? 'user' as const : 'model' as const,
         text: m.text,
       }))
+      
       if (mode === 'agent') {
-        const runStartTime = Date.now()
-        setLiveAgentRun({ logs: [], startedAt: runStartTime })
+        const startTime = Date.now()
+        setRunStartTime(startTime)
         setStreamingText(null)
-        // Convert RenderErrorWithContext to RenderError for agent
+        
         const renderErrorsForAgent: RenderError[] | undefined =
           pendingRenderErrors && pendingRenderErrors.length > 0
             ? pendingRenderErrors.map(e => ({
@@ -259,6 +326,7 @@ export function ChatPanel({
                 errorMessage: e.errorMessage,
               }))
             : undefined
+            
         const result = await runAgentChatWithTools({
           apiKey: apiKey!,
           modelApiId: apiId,
@@ -267,7 +335,9 @@ export function ChatPanel({
           agentContext: { ...agentContext, imageUrl: imageToSendThisTurn ?? undefined },
           onToolAction,
           onLog: (line) => {
-            setLiveAgentRun(prev => prev ? { ...prev, logs: [...prev.logs, line] } : null)
+            const stepId = genStepId()
+            const step = parseLogToStep(line, stepId)
+            addLiveStep(step)
           },
           onStreamingText: (streamText, isThinking) => {
             setStreamingText({ text: streamText, isThinking })
@@ -275,19 +345,28 @@ export function ChatPanel({
           attachedImage: imageToSendThisTurn ?? undefined,
           renderErrors: renderErrorsForAgent,
         })
-        // Clear render errors after agent processes them
+        
         if (renderErrorsForAgent && onClearRenderErrors) {
           onClearRenderErrors()
         }
-        const thinkingDuration = Math.floor((Date.now() - runStartTime) / 1000)
-        setLiveAgentRun(null)
+        
+        const thinkingDuration = Math.floor((Date.now() - startTime) / 1000)
+        
+        // Convert liveSteps to stored format
+        const finalSteps: AgentStep[] = [...liveSteps]
+        
+        setRunStartTime(null)
+        setLiveSteps([])
         setStreamingText(null)
+        setCurrentLiveStepId(null)
+        
         chatLogToTerminal('agent', {
           text: result.text,
           logs: result.logs,
           toolCalls: result.toolCalls,
           error: result.error,
         })
+        
         setMessages(prev => [...prev, {
           role: 'agent',
           text: result.error ? `出錯：${result.error}\n\n${result.text || ''}` : (result.text || '（無回覆）'),
@@ -296,6 +375,7 @@ export function ChatPanel({
             toolCalls: result.toolCalls,
             error: result.error,
             thinkingDuration,
+            steps: finalSteps,
           },
         }])
       } else {
@@ -304,8 +384,10 @@ export function ChatPanel({
         setMessages(prev => [...prev, { role: 'agent', text: reply }])
       }
     } catch (e) {
-      setLiveAgentRun(null)
+      setRunStartTime(null)
+      setLiveSteps([])
       setStreamingText(null)
+      setCurrentLiveStepId(null)
       const errMsg = e instanceof Error ? e.message : String(e)
       const isFetchFailed = /failed to fetch|network|networkerror/i.test(errMsg)
       const hint = isFetchFailed
@@ -318,20 +400,7 @@ export function ChatPanel({
     }
   }
 
-  /** Toggle collapse state for a specific run block */
-  const toggleRunCollapse = (index: number) => {
-    setCollapsedRuns(prev => {
-      const next = new Set(prev)
-      if (next.has(index)) {
-        next.delete(index)
-      } else {
-        next.add(index)
-      }
-      return next
-    })
-  }
-
-  /** Format time duration as "Xs" or "Xm Xs" */
+  /** Format duration */
   const formatDuration = (seconds: number): string => {
     if (seconds < 60) return `${seconds}s`
     const mins = Math.floor(seconds / 60)
@@ -339,110 +408,169 @@ export function ChatPanel({
     return `${mins}m ${secs}s`
   }
 
-  /** Render Cursor-style agent run block (live or completed) */
-  const renderAgentRunBlock = (
-    run: { logs: string[]; toolCalls?: AgentRunInfo['toolCalls']; error?: string; thinkingDuration?: number },
-    isLive?: boolean,
-    messageIndex?: number
-  ) => {
-    const hasToolCalls = run.toolCalls && run.toolCalls.length > 0
-    const isCollapsed = messageIndex !== undefined && collapsedRuns.has(messageIndex)
-    const toolCount = run.toolCalls?.length ?? 0
-    const successCount = run.toolCalls?.filter(t => t.success).length ?? 0
-    const failCount = toolCount - successCount
+  /** Get step icon and color class */
+  const getStepStyle = (type: AgentStepType, success?: boolean) => {
+    switch (type) {
+      case 'thinking':
+        return { icon: '💭', className: 'ide-step--thinking' }
+      case 'tool_call':
+        return { icon: '→', className: 'ide-step--tool-call' }
+      case 'tool_result':
+        return { icon: '←', className: success ? 'ide-step--success' : 'ide-step--error' }
+      case 'layer':
+        return { icon: '◆', className: 'ide-step--layer' }
+      case 'skill':
+        return { icon: '◈', className: 'ide-step--skill' }
+      case 'model':
+        return { icon: '⚡', className: 'ide-step--model' }
+      case 'message':
+        return { icon: '💬', className: 'ide-step--message' }
+      case 'error':
+        return { icon: '⚠', className: 'ide-step--error' }
+      default:
+        return { icon: '•', className: 'ide-step--log' }
+    }
+  }
 
+  /** Render a single step (ALL steps are collapsible) */
+  const renderStep = (step: AgentStep, isLive: boolean = false) => {
+    const isExpanded = expandedSteps.has(step.id) || isLive
+    const { icon, className } = getStepStyle(step.type, step.success)
+    
+    // All steps with content > 50 chars can be collapsed
+    const hasContent = step.content && step.content.length > 0
+    const isCollapsible = hasContent && step.content.length > 50
+    
+    // Generate preview text (first line or first 80 chars)
+    const firstLine = step.content.split('\n')[0]
+    const preview = firstLine.length > 80 ? firstLine.slice(0, 80) + '…' : firstLine
+    
+    // Type label
+    const getTypeLabel = () => {
+      switch (step.type) {
+        case 'thinking': return '💭 Thinking'
+        case 'tool_call': return step.toolName ? `→ ${step.toolName}` : '→ Tool'
+        case 'tool_result': return step.success ? `← Result ✓` : `← Result ✗`
+        case 'layer': return `◆ ${step.content}`
+        case 'skill': return `◈ ${step.content}`
+        case 'model': return `⚡ ${step.content}`
+        default: return step.type
+      }
+    }
+    
+    // For layer/skill/model - just show inline, no expand
+    if (step.type === 'layer' || step.type === 'skill' || step.type === 'model') {
+      return (
+        <div key={step.id} className={`ide-step ${className}`}>
+          <div className="ide-step-inline">{getTypeLabel()}</div>
+        </div>
+      )
+    }
+    
     return (
-      <div className={`ide-chat-agent-run ${isLive ? 'ide-chat-agent-run--live' : ''}`}>
+      <div key={step.id} className={`ide-step ${className} ${isLive ? 'ide-step--live' : ''} ${isExpanded ? 'ide-step--expanded' : 'ide-step--collapsed'}`}>
         <button
           type="button"
-          className="ide-chat-agent-run-header"
-          onClick={() => messageIndex !== undefined && !isLive && toggleRunCollapse(messageIndex)}
-          style={{ cursor: isLive ? 'default' : 'pointer', width: '100%', textAlign: 'left' }}
+          className="ide-step-header"
+          onClick={() => toggleStep(step.id)}
         >
-          <span className="ide-chat-agent-run-dot" />
-          <span className="ide-chat-agent-run-title">
-            {isLive ? (
-              <>Agent running… <span className="ide-chat-agent-run-time">{formatDuration(elapsedTime)}</span></>
-            ) : (
-              <>
-                Agent
-                {toolCount > 0 && (
-                  <span className="ide-chat-agent-run-stats">
-                    <span className="ide-chat-agent-run-stat ide-chat-agent-run-stat--tool">
-                      {toolCount} tool{toolCount !== 1 ? 's' : ''}
-                    </span>
-                    {successCount > 0 && (
-                      <span className="ide-chat-agent-run-stat ide-chat-agent-run-stat--ok">✓ {successCount}</span>
-                    )}
-                    {failCount > 0 && (
-                      <span className="ide-chat-agent-run-stat ide-chat-agent-run-stat--error">✗ {failCount}</span>
-                    )}
-                  </span>
-                )}
-                {run.thinkingDuration && run.thinkingDuration > 0 && (
-                  <span className="ide-chat-agent-run-time">Thought {formatDuration(run.thinkingDuration)}</span>
-                )}
-              </>
-            )}
-          </span>
-          {!isLive && (
-            <span className={`ide-chat-agent-run-chevron ${isCollapsed ? 'ide-chat-agent-run-chevron--collapsed' : ''}`}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          {/* Chevron - always show for collapsible content */}
+          {isCollapsible && (
+            <span className={`ide-step-chevron ${isExpanded ? '' : 'ide-step-chevron--collapsed'}`}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                 <path d="M6 9l6 6 6-6" />
               </svg>
             </span>
           )}
+          
+          {/* Type label */}
+          <span className="ide-step-type">{getTypeLabel()}</span>
+          
+          {/* Preview when collapsed */}
+          {!isExpanded && isCollapsible && step.type !== 'thinking' && (
+            <span className="ide-step-preview">{preview}</span>
+          )}
         </button>
-        {!isCollapsed && (
-          <div className="ide-chat-agent-run-steps">
-            {hasToolCalls && !isLive
-              ? run.toolCalls!.map((tc, idx) => (
-                  <div key={idx} className="ide-chat-agent-step-group">
-                    <div className="ide-chat-agent-step ide-chat-agent-step--tool">
-                      <span className="ide-chat-agent-step-arrow">→</span>
-                      <span className="ide-chat-agent-step-name">{tc.name}</span>
-                      {Object.keys(tc.args).length > 0 && (
-                        <span className="ide-chat-agent-step-args">
-                          ({Object.entries(tc.args).map(([k, v]) => `${k}: ${typeof v === 'string' ? v.slice(0, 30) : JSON.stringify(v)}`).join(', ').slice(0, 80)}{Object.keys(tc.args).length > 3 ? '…' : ''})
-                        </span>
-                      )}
-                    </div>
-                    <div className={`ide-chat-agent-step ide-chat-agent-step--result ${tc.success ? 'ide-chat-agent-step--ok' : 'ide-chat-agent-step--error'}`}>
-                      <span className="ide-chat-agent-step-arrow">←</span>
-                      {tc.success ? '✓' : '✗'} {tc.result.slice(0, 150)}{tc.result.length > 150 ? '…' : ''}
-                    </div>
+        
+        {/* Content - show when expanded OR when short */}
+        {(isExpanded || !isCollapsible) && hasContent && (
+          <div className="ide-step-content">
+            {step.content}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  /** Render steps from a stored message */
+  const renderStoredSteps = (run: AgentRunInfo, messageIdx: number) => {
+    // Prefer parsed steps if available, otherwise parse from logs
+    const steps = run.steps ?? run.logs.map((log, i) => parseLogToStep(log, `msg-${messageIdx}-step-${i}`))
+    
+    if (steps.length === 0 && (!run.toolCalls || run.toolCalls.length === 0)) {
+      return null
+    }
+    
+    // If we have toolCalls but no steps, render toolCalls directly
+    if (steps.length === 0 && run.toolCalls && run.toolCalls.length > 0) {
+      return (
+        <div className="ide-steps-container">
+          {run.toolCalls.map((tc, idx) => {
+            const stepId = `msg-${messageIdx}-tc-${idx}`
+            const isExpanded = expandedSteps.has(stepId)
+            const isCollapsible = tc.result.length > 80
+            const preview = tc.result.split('\n')[0].slice(0, 60)
+            return (
+              <div key={stepId} className={`ide-step ide-step--tool-call ${tc.success ? 'ide-step--success' : 'ide-step--error'} ${isExpanded ? 'ide-step--expanded' : 'ide-step--collapsed'}`}>
+                <button
+                  type="button"
+                  className="ide-step-header"
+                  onClick={() => toggleStep(stepId)}
+                >
+                  {/* Chevron */}
+                  <span className={`ide-step-chevron ${isExpanded ? '' : 'ide-step-chevron--collapsed'}`}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <path d="M6 9l6 6 6-6" />
+                    </svg>
+                  </span>
+                  
+                  {/* Tool name and status */}
+                  <span className="ide-step-type">→ {tc.name}</span>
+                  <span className={`ide-step-status ${tc.success ? 'ide-step-status--ok' : 'ide-step-status--error'}`}>
+                    {tc.success ? '✓' : '✗'}
+                  </span>
+                  
+                  {/* Preview when collapsed */}
+                  {!isExpanded && isCollapsible && (
+                    <span className="ide-step-preview">{preview}…</span>
+                  )}
+                </button>
+                
+                {/* Content */}
+                {(isExpanded || !isCollapsible) && (
+                  <div className="ide-step-content">
+                    {Object.keys(tc.args).length > 0 && (
+                      <div className="ide-step-args">
+                        {Object.entries(tc.args).map(([k, v]) => (
+                          <span key={k} className="ide-step-arg">
+                            <span className="ide-step-arg-key">{k}:</span> {typeof v === 'string' ? (v.length > 100 ? v.slice(0, 100) + '…' : v) : JSON.stringify(v).slice(0, 100)}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    <div className="ide-step-result">{tc.result}</div>
                   </div>
-                ))
-              : run.logs.map((line, idx) => {
-                  const layer = /^\[Layer\]\s*(.+)$/.exec(line)
-                  const skill = /^\[Skill\]\s*(.+)$/.exec(line)
-                  const toolCall = /^\[Tool\]\s*(.+)$/.exec(line)
-                  const toolResult = /^\[Tool\]\s*\w+\s*→\s*(ok|error):\s*(.+)$/.exec(line)
-                  const thinking = /^\[Thinking\]\s*(.+)$/.exec(line)
-                  const model = /^\[Model\]\s*(.+)$/.exec(line)
-                  let stepClass = 'ide-chat-agent-step--log'
-                  let icon = ''
-                  if (layer) { stepClass = 'ide-chat-agent-step--layer'; icon = '◆' }
-                  else if (skill) { stepClass = 'ide-chat-agent-step--skill'; icon = '◈' }
-                  else if (toolResult) { stepClass = toolResult[1] === 'ok' ? 'ide-chat-agent-step--ok' : 'ide-chat-agent-step--error'; icon = '←' }
-                  else if (toolCall) { stepClass = 'ide-chat-agent-step--tool'; icon = '→' }
-                  else if (thinking) { stepClass = 'ide-chat-agent-step--thinking'; icon = '💭' }
-                  else if (model) { stepClass = 'ide-chat-agent-step--model'; icon = '⚡' }
-                  return (
-                    <div key={idx} className={`ide-chat-agent-step ${stepClass}`}>
-                      {icon && <span className="ide-chat-agent-step-icon">{icon}</span>}
-                      {line.replace(/^\[(Layer|Skill|Tool|Thinking|Model)\]\s*/, '')}
-                    </div>
-                  )
-                })}
-          </div>
-        )}
-        {run.error && !isLive && !isCollapsed && (
-          <div className="ide-chat-agent-run-error">
-            <span className="ide-chat-agent-run-error-icon">⚠</span>
-            {run.error}
-          </div>
-        )}
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )
+    }
+    
+    return (
+      <div className="ide-steps-container">
+        {steps.map(step => renderStep(step, false))}
       </div>
     )
   }
@@ -451,7 +579,7 @@ export function ChatPanel({
     <div className="ide-chat">
       {chatTabs && chatTabs.length > 0 && (
         <div className="ide-chat-tabs">
-          <div className="ide-chat-tabs-scroll" ref={tabsScrollRef}>
+          <div className="ide-chat-tabs-scroll">
             {chatTabs.map((tab) => (
               <div
                 key={tab.id}
@@ -476,7 +604,6 @@ export function ChatPanel({
                       onRequestDeleteChat(tab.id)
                     }}
                     title="刪除對話"
-                    aria-label="刪除對話"
                   >
                     ×
                   </button>
@@ -493,6 +620,7 @@ export function ChatPanel({
           </button>
         </div>
       )}
+      
       <div className="ide-chat-messages">
         {messages.map((msg, i) => (
           <div key={i} className={`ide-chat-msg ${msg.role}`}>
@@ -501,31 +629,57 @@ export function ChatPanel({
                 <img src={msg.imageDataUrl} alt="Attached" className="ide-chat-msg-image" />
               </div>
             )}
-            {msg.role === 'agent' && msg.agentRun && (msg.agentRun.logs.length > 0 || (msg.agentRun.toolCalls?.length ?? 0) > 0) && renderAgentRunBlock(msg.agentRun, false, i)}
-            <div className={msg.agentRun ? 'ide-chat-agent-reply' : ''}>{msg.text}</div>
+            
+            {/* Agent steps (linear display) */}
+            {msg.role === 'agent' && msg.agentRun && renderStoredSteps(msg.agentRun, i)}
+            
+            {/* Final message text */}
+            <div className="ide-chat-msg-text">{msg.text}</div>
           </div>
         ))}
+        
+        {/* Live agent run - steps displayed inline */}
         {loading && mode === 'agent' && (
-          <div className="ide-chat-msg agent ide-chat-msg--agent-run">
-            {liveAgentRun ? renderAgentRunBlock(liveAgentRun, true) : <div className="ide-chat-loading">思考中…</div>}
+          <div className="ide-chat-msg agent ide-chat-msg--live">
+            {/* Live header showing elapsed time */}
+            <div className="ide-live-header">
+              <span className="ide-live-dot" />
+              <span>Agent running… {formatDuration(elapsedTime)}</span>
+            </div>
+            
+            {/* Live steps */}
+            <div className="ide-steps-container">
+              {liveSteps.map(step => renderStep(step, step.id === currentLiveStepId))}
+            </div>
+            
+            {/* Streaming text (current thinking or reply) */}
             {streamingText && (
-              <div className={`ide-chat-streaming ${streamingText.isThinking ? 'ide-chat-streaming--thinking' : ''}`}>
-                {streamingText.isThinking && <span className="ide-chat-streaming-label">Thinking: </span>}
-                <span className="ide-chat-streaming-text">{streamingText.text}</span>
-                <span className="ide-chat-streaming-cursor">▊</span>
+              <div className={`ide-streaming ${streamingText.isThinking ? 'ide-streaming--thinking' : ''}`}>
+                {streamingText.isThinking && (
+                  <span className="ide-streaming-label">
+                    Thought for {formatDuration(elapsedTime)}
+                  </span>
+                )}
+                <div className="ide-streaming-text">
+                  {streamingText.text}
+                  <span className="ide-streaming-cursor">▊</span>
+                </div>
               </div>
             )}
-            <div ref={liveRunEndRef} />
           </div>
         )}
+        
         {loading && mode !== 'agent' && (
-          <div className="ide-chat-msg agent ide-chat-loading">思考中…</div>
+          <div className="ide-chat-msg agent">
+            <div className="ide-chat-loading">思考中…</div>
+          </div>
         )}
-        {error && (
-          <div className="ide-chat-error">{error}</div>
-        )}
+        
+        {error && <div className="ide-chat-error">{error}</div>}
+        
         <div ref={messagesEndRef} />
       </div>
+      
       <div className="ide-chat-input-wrap">
         {imageToSend && (
           <div className="ide-chat-attached">
@@ -551,12 +705,10 @@ export function ChatPanel({
               className={`ide-chatbar-pill ide-chatbar-mode ${mode === 'agent' ? 'ide-chatbar-pill--active' : ''}`}
               onClick={() => setDropdownOpen(d => (d === 'mode' ? null : 'mode'))}
               title="模式"
-              aria-expanded={dropdownOpen === 'mode'}
-              aria-haspopup="listbox"
             >
               {mode === 'agent' ? '∞ Agent' : 'Ask'}
-              <span className="ide-chatbar-chevron" aria-hidden>
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <span className="ide-chatbar-chevron">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <path d="M6 9l6 6 6-6" />
                 </svg>
               </span>
@@ -564,23 +716,17 @@ export function ChatPanel({
             {dropdownOpen === 'mode' && (
               <ul className="ide-chatbar-dropdown-list ide-chatbar-dropdown-list--up" role="listbox">
                 {(['ask', 'agent'] as const).map((m) => (
-                  <li key={m} role="option" aria-selected={mode === m}>
+                  <li key={m} role="option">
                     <button
                       type="button"
                       className={`ide-chatbar-dropdown-option ${mode === m ? 'ide-chatbar-dropdown-option--selected' : ''}`}
                       onClick={() => { setMode(m); setDropdownOpen(null) }}
                     >
-                      <span className="ide-chatbar-dropdown-icon" aria-hidden>
-                        {m === 'agent' ? '∞' : (
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                          </svg>
-                        )}
+                      <span className="ide-chatbar-dropdown-icon">
+                        {m === 'agent' ? '∞' : '💬'}
                       </span>
                       <span className="ide-chatbar-dropdown-label">{m === 'agent' ? 'Agent' : 'Ask'}</span>
-                      {m === 'ask' && <span className="ide-chatbar-dropdown-shortcut">Ctrl+L</span>}
-                      {m === 'agent' && <span className="ide-chatbar-dropdown-shortcut">Ctrl+I</span>}
-                      {mode === m && <span className="ide-chatbar-dropdown-check" aria-hidden>✓</span>}
+                      {mode === m && <span className="ide-chatbar-dropdown-check">✓</span>}
                     </button>
                   </li>
                 ))}
@@ -593,12 +739,10 @@ export function ChatPanel({
               className="ide-chatbar-select ide-chatbar-model"
               onClick={() => setDropdownOpen(d => (d === 'model' ? null : 'model'))}
               title="AI 模型"
-              aria-expanded={dropdownOpen === 'model'}
-              aria-haspopup="listbox"
             >
               {MODELS.find(m => m.id === model)?.label ?? model}
-              <span className="ide-chatbar-chevron" aria-hidden>
-                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <span className="ide-chatbar-chevron">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <path d="M6 9l6 6 6-6" />
                 </svg>
               </span>
@@ -606,14 +750,14 @@ export function ChatPanel({
             {dropdownOpen === 'model' && (
               <ul className="ide-chatbar-dropdown-list ide-chatbar-dropdown-list--up" role="listbox">
                 {MODELS.map((m) => (
-                  <li key={m.id} role="option" aria-selected={model === m.id}>
+                  <li key={m.id} role="option">
                     <button
                       type="button"
                       className={`ide-chatbar-dropdown-option ${model === m.id ? 'ide-chatbar-dropdown-option--selected' : ''}`}
                       onClick={() => { setModel(m.id); setDropdownOpen(null) }}
                     >
                       <span className="ide-chatbar-dropdown-label">{m.label}</span>
-                      {model === m.id && <span className="ide-chatbar-dropdown-check" aria-hidden>✓</span>}
+                      {model === m.id && <span className="ide-chatbar-dropdown-check">✓</span>}
                     </button>
                   </li>
                 ))}
@@ -625,7 +769,6 @@ export function ChatPanel({
             type="file"
             accept="image/*"
             className="ide-chatbar-file-input"
-            aria-label="上傳圖片"
             onChange={(e) => {
               const file = e.target.files?.[0]
               if (file) setImageFromFile(file)
@@ -636,10 +779,9 @@ export function ChatPanel({
             type="button"
             className="ide-chatbar-btn ide-chatbar-btn--upload"
             onClick={() => fileInputRef.current?.click()}
-            title="上傳圖片 / Upload image"
-            aria-label="上傳圖片"
+            title="上傳圖片"
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
               <circle cx="8.5" cy="8.5" r="1.5" />
               <polyline points="21 15 16 10 5 21" />
@@ -650,15 +792,12 @@ export function ChatPanel({
             className="ide-chatbar-send"
             onClick={send}
             disabled={loading}
-            title={imageToSend ? '發送附圖' : '發送'}
-            aria-label="發送"
+            title="發送"
           >
             {loading ? (
-              <span className="ide-chatbar-send-spinner" aria-hidden />
+              <span className="ide-chatbar-send-spinner" />
             ) : (
-              <svg className="ide-chatbar-send-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden>
-                <path d="M12 19V5m0 0l-5 5m5-5l5 5" stroke="rgba(255,80,90,0.55)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" transform="translate(0.35, 0)" />
-                <path d="M12 19V5m0 0l-5 5m5-5l5 5" stroke="rgba(80,120,255,0.55)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" transform="translate(-0.35, 0)" />
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
                 <path d="M12 19V5m0 0l-5 5m5-5l5 5" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
             )}

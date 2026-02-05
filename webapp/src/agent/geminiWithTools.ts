@@ -253,22 +253,6 @@ export interface AgentChatResult {
   logs?: string[]
 }
 
-/** Detect "turn first chapter/page to note" intent – auto-execute so agent works even if model returns text only */
-function wantsFirstPageToNote(msg: string): boolean {
-  const lower = msg.toLowerCase().trim()
-  const patterns = [
-    /first\s*(chapter|page|頁|章)/,
-    /第一[頁章]/,
-    /turn\s*(the\s*)?first/,
-    /幫.*第一.*筆記/,
-    /將.*第一.*(頁|章).*筆記/,
-    /summarize\s*(the\s*)?first/,
-    /new\s*notes?.*first/,
-    /筆記.*第一/,
-  ]
-  return patterns.some((p) => p.test(lower)) || (lower.includes('first') && (lower.includes('note') || lower.includes('筆記') || lower.includes('summarize')))
-}
-
 /** Max conversation history messages to send (avoids model focusing on old turns / repeating). */
 const HISTORY_CAP = 20
 
@@ -312,29 +296,6 @@ export async function runAgentChatWithTools(options: AgentChatOptions): Promise<
     }
   }
 
-  // Auto-execute: when user clearly wants "first chapter/page to note" and we have PDF + note, run page_to_note immediately
-  const hasPdfPage1 = agentContext.pdfPageTexts?.[1]?.trim()
-  const hasNote = agentContext.note?.id
-  if (wantsFirstPageToNote(userMessage) && hasPdfPage1 && hasNote) {
-    pushLog('[Layer] EDIT_NOTES')
-    pushLog('[Skill] page_to_note')
-    pushLog('[Tool] page_to_note(page_number=1) [auto-execute]')
-    const result = await executeTool(
-      'page_to_note',
-      { page_number: '1', suggested_title: '第一章總結（Year 1）' },
-      agentContext,
-      callGemini
-    )
-    const resultText = result.success ? (result.text ?? '完成。') : (result.error ?? '工具出錯')
-    pushLog(`[Tool] page_to_note → ${result.success ? 'ok' : 'error'}: ${resultText.slice(0, 80)}${resultText.length > 80 ? '…' : ''}`)
-    toolCalls.push({ name: 'page_to_note', args: { page_number: '1' }, result: resultText, success: result.success })
-    if (result.action && onToolAction) onToolAction(result.action)
-    const reply = result.success
-      ? `已按你嘅要求將第一頁轉成筆記（適合 Year 1 大學生）。\n\n${resultText}`
-      : `嘗試轉第一頁時出錯：${resultText}`
-    return { text: reply, toolCalls, logs }
-  }
-
   const history = messages
     .slice(-HISTORY_CAP)
     .map(m => ({
@@ -366,7 +327,7 @@ export async function runAgentChatWithTools(options: AgentChatOptions): Promise<
     const generationConfig: Record<string, unknown> = {
       // Gemini 3 is optimized for temperature 1.0; lower values can cause empty responses
       temperature: useGemini3 ? 1.0 : 0.4,
-      maxOutputTokens: 4096,
+      maxOutputTokens: 65536,
     }
     // For Gemini 3: add thinkingConfig with thinkingLevel and includeThoughts
     // thinkingLevel "low" is faster and avoids empty-response issues for simpler tasks
@@ -484,14 +445,9 @@ export async function runAgentChatWithTools(options: AgentChatOptions): Promise<
         }
       }
 
-      // Log final thinking summary – keep幾乎全部內容方便之後重睇（同時避免無限膨脹）
+      // Log full thinking content (no trim) for storage and review
       if (currentThinkingText) {
-        const MAX_THINKING_LOG = 2000
-        const trimmed =
-          currentThinkingText.length > MAX_THINKING_LOG
-            ? `${currentThinkingText.slice(0, MAX_THINKING_LOG)}…`
-            : currentThinkingText
-        pushLog(`[Thinking] ${trimmed}`)
+        pushLog(`[Thinking] ${currentThinkingText}`)
       }
 
       if (accumulatedParts.length === 0) {
@@ -512,10 +468,10 @@ export async function runAgentChatWithTools(options: AgentChatOptions): Promise<
       }
       modelContent = candidate.content as { role: 'user' | 'model'; parts: ContentPart[] }
 
-      // For non-streaming: extract and display thought summaries
+      // For non-streaming: extract and display full thought content
       for (const p of modelContent.parts) {
         if ('text' in p && p.text && (p as { thought?: boolean }).thought) {
-          pushLog(`[Thinking] ${(p.text as string).slice(0, 300)}${(p.text as string).length > 300 ? '…' : ''}`)
+          pushLog(`[Thinking] ${p.text as string}`)
         }
       }
     }
@@ -546,10 +502,10 @@ export async function runAgentChatWithTools(options: AgentChatOptions): Promise<
       const meta = TOOL_LAYER_SKILL[name] ?? { layer: 'AGENT', skill: name }
       pushLog(`[Layer] ${meta.layer}`)
       pushLog(`[Skill] ${meta.skill}`)
-      pushLog(`[Tool] ${name}(${JSON.stringify(args).slice(0, 120)}${JSON.stringify(args).length > 120 ? '…' : ''})`)
+      pushLog(`[Tool] ${name}(${JSON.stringify(args)})`)
       const result = await executeTool(name, args, agentContext, callGemini)
       const resultText = result.success ? (result.text ?? '完成。') : (result.error ?? '工具出錯')
-      pushLog(`[Tool] ${name} → ${result.success ? 'ok' : 'error'}: ${resultText.slice(0, 80)}${resultText.length > 80 ? '…' : ''}`)
+      pushLog(`[Tool] ${name} → ${result.success ? 'ok' : 'error'}: ${resultText}`)
       // For search_workspace, show full result in realtime log
       if (name === 'search_workspace' && result.success && result.text) {
         pushLog('[Search result]')

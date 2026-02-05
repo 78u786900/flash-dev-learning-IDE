@@ -132,6 +132,8 @@ function App() {
   const [lastUsedPdfFile, setLastUsedPdfFile] = useState<DroppedFile | null>(null)
   /** PDF page number the user is currently viewing in the middle section (1-based). Agent uses this for "this page". */
   const [viewingPdfPageNumber, setViewingPdfPageNumber] = useState<number | null>(null)
+  /** Section ID to focus/scroll to when AI makes changes to a note */
+  const [focusSectionId, setFocusSectionId] = useState<string | null>(null)
   const lastPdfFileIdForViewing = useRef<string | null>(null)
   /** Ref so PDF load callbacks only apply when this file is still active (avoids stale overwrites). */
   const activeFileIdRef = useRef<string | null>(null)
@@ -275,16 +277,18 @@ function App() {
     logAction('added_section', '加咗新章節')
   }, [updateNote, logAction, pushHistory])
 
-  const addSectionWithContent = useCallback((noteId: string, title: string, content: string) => {
+  const addSectionWithContent = useCallback((noteId: string, title: string, content: string): string => {
     pushHistory()
+    const newSectionId = `s${Date.now()}`
     updateNote(noteId, n => ({
       ...n,
       sections: [
         ...n.sections,
-        { id: `s${Date.now()}`, title, content, done: false },
+        { id: newSectionId, title, content, done: false },
       ],
     }))
     logAction('added_section', `加咗章節「${title}」`)
+    return newSectionId
   }, [updateNote, logAction, pushHistory])
 
   const addNote = useCallback((name: string) => {
@@ -431,6 +435,10 @@ function App() {
     if (added.length) {
       setFiles(prev => [...prev, ...added])
       added.forEach(f => logAction('dropped_file', `加入檔案「${f.name}」`))
+      // Auto-display the last uploaded file
+      const lastAdded = added[added.length - 1]
+      setActiveFileId(lastAdded.id)
+      setActiveNoteId(null)
     }
   }, [logAction])
 
@@ -701,24 +709,39 @@ function App() {
     (overlayKey && canvasOverlaysByKey[overlayKey]) ? canvasOverlaysByKey[overlayKey] : []
 
   const handleToolAction = useCallback((action: ToolResultAction) => {
+    // Helper to navigate to a note and focus a section
+    const navigateToNote = (noteId: string, sectionId?: string) => {
+      setActiveNoteId(noteId)
+      setActiveFileId(null)
+      if (sectionId) {
+        setFocusSectionId(sectionId)
+      }
+    }
+
     if (action.type === 'add_section') {
-      addSectionWithContent(action.noteId, action.title, action.content)
+      const newSectionId = addSectionWithContent(action.noteId, action.title, action.content)
+      navigateToNote(action.noteId, newSectionId)
     } else if (action.type === 'merge_sections') {
-      addSectionWithContent(action.noteId, action.newTitle, action.content)
+      const newSectionId = addSectionWithContent(action.noteId, action.newTitle, action.content)
+      navigateToNote(action.noteId, newSectionId)
     } else if (action.type === 'update_section') {
       updateSection(action.noteId, action.sectionId, s => ({
         ...s,
         ...(action.title != null && { title: action.title }),
         ...(action.content != null && { content: action.content }),
       }))
+      navigateToNote(action.noteId, action.sectionId)
     } else if (action.type === 'reorder_sections') {
       reorderSections(action.noteId, action.sectionIds)
+      navigateToNote(action.noteId)
     } else if (action.type === 'rename_note') {
       renameNote(action.noteId, action.name)
+      navigateToNote(action.noteId)
     } else if (action.type === 'delete_note') {
       deleteNote(action.noteId)
     } else if (action.type === 'delete_section') {
       deleteSection(action.noteId, action.sectionIds)
+      navigateToNote(action.noteId)
     } else if (action.type === 'upsert_code_window') {
       pushHistory()
       updateSection(action.noteId, action.sectionId, (s) => {
@@ -739,6 +762,7 @@ function App() {
           ],
         }
       })
+      navigateToNote(action.noteId, action.sectionId)
     }
   }, [addSectionWithContent, updateSection, reorderSections, renameNote, deleteNote, deleteSection])
 
@@ -798,6 +822,8 @@ function App() {
                   requestDeleteCodeWindow(displayNote.id, sectionId, codeWindowId)
                 }
                 onRenderError={handleRenderError}
+                focusSectionId={focusSectionId}
+                onFocusHandled={() => setFocusSectionId(null)}
               />
             ) : activeFile ? (
               <FileViewer

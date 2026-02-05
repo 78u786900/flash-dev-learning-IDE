@@ -22,6 +22,22 @@ const CHAT_CAP = 300
 const DEBOUNCE_MS = 300
 const CHAT_SAVE_DEBOUNCE_MS = 80
 
+/** Step types for linear agent display */
+export type AgentStepType = 'thinking' | 'tool_call' | 'tool_result' | 'message' | 'layer' | 'skill' | 'model' | 'log' | 'error'
+
+/** Single step in agent execution (for linear display) */
+export interface AgentStep {
+  id: string
+  type: AgentStepType
+  content: string
+  /** For tool_call: tool name */
+  toolName?: string
+  /** For tool_result: success/fail */
+  success?: boolean
+  /** Timestamp */
+  ts: number
+}
+
 /** Stored chat message (serializable; no blob URLs). imageDataUrl is optional for user messages with attached image. */
 export interface StoredChatMessage {
   role: 'user' | 'agent'
@@ -34,6 +50,8 @@ export interface StoredChatMessage {
     error?: string
     /** Duration in seconds for thinking time display */
     thinkingDuration?: number
+    /** Parsed steps for linear display */
+    steps?: AgentStep[]
   }
 }
 
