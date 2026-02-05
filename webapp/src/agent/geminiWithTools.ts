@@ -484,9 +484,14 @@ export async function runAgentChatWithTools(options: AgentChatOptions): Promise<
         }
       }
 
-      // Log final thinking summary
+      // Log final thinking summary – keep幾乎全部內容方便之後重睇（同時避免無限膨脹）
       if (currentThinkingText) {
-        pushLog(`[Thinking] ${currentThinkingText.slice(0, 300)}${currentThinkingText.length > 300 ? '…' : ''}`)
+        const MAX_THINKING_LOG = 2000
+        const trimmed =
+          currentThinkingText.length > MAX_THINKING_LOG
+            ? `${currentThinkingText.slice(0, MAX_THINKING_LOG)}…`
+            : currentThinkingText
+        pushLog(`[Thinking] ${trimmed}`)
       }
 
       if (accumulatedParts.length === 0) {

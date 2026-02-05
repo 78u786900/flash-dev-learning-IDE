@@ -2099,27 +2099,26 @@ body {
 
 /* Cursor-style agent run block: real-time tool log + result */
 .ide-chat-agent-run {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg-secondary);
-  overflow: hidden;
-  margin-bottom: 10px;
+  margin: 4px 0;
+  padding: 0 0 4px;
+  border: none;
+  background: transparent;
 }
 
 .ide-chat-agent-run--live {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px rgba(var(--accent-rgb, 99, 102, 241), 0.15);
+  border: none;
+  box-shadow: none;
 }
 
 .ide-chat-agent-run-header {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 0 0 4px;
   font-size: 12px;
-  font-weight: 600;
-  color: var(--text);
-  border-bottom: 1px solid var(--border);
+  font-weight: 500;
+  color: var(--text-dim);
+  border-bottom: none;
   background: var(--bg-tertiary);
 }
 
@@ -2146,7 +2145,7 @@ body {
 }
 
 .ide-chat-agent-run-steps {
-  padding: 8px 0;
+  padding: 2px 0 0;
   font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
   font-size: 12px;
   line-height: 1.5;
@@ -2223,11 +2222,11 @@ body {
 }
 
 .ide-chat-agent-run-error {
-  padding: 8px 12px;
+  padding: 4px 0;
   font-size: 12px;
   color: #f43f5e;
-  background: rgba(244, 63, 94, 0.08);
-  border-top: 1px solid var(--border);
+  background: transparent;
+  border-top: none;
 }
 
 .ide-chat-agent-reply {
