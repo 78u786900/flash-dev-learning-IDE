@@ -1,17 +1,37 @@
 import { useState, useRef, useEffect } from 'react'
 import type { AgentContext, ToolResultAction } from '../agent/types'
-import { runAgentChatWithTools } from '../agent/geminiWithTools'
+import { runAgentChatWithTools, type RenderError } from '../agent/geminiWithTools'
 import { chatLogToTerminal } from '../agent/chatLog'
 import type { StoredChatMessage } from '../storage/persistence'
+import type { RenderErrorWithContext } from './Canvas'
 
 const MAX_IMAGE_DATAURL_LENGTH = 800 * 1024 // ~800KB; skip storing if larger to avoid localStorage quota
 
 export type ChatMode = 'agent' | 'ask'
-export type GeminiModel = 'gemini-3-flash' | 'gemini-2.5-pro'
+
+/**
+ * Supported Gemini models in the UI.
+ *
+ * REST model IDs (from https://ai.google.dev/gemini-api/docs/models):
+ * - gemini-2.0-flash       → Gemini 2 Flash
+ * - gemini-2.5-flash       → Gemini 2.5 Flash
+ * - gemini-2.5-pro         → Gemini 2.5 Pro
+ * - gemini-3-flash-preview → Gemini 3 Flash (preview)
+ * - gemini-3-pro-preview   → Gemini 3 Pro (preview)
+ */
+export type GeminiModel =
+  | 'gemini-2-flash'
+  | 'gemini-2.5-flash'
+  | 'gemini-2.5-pro'
+  | 'gemini-3-flash'
+  | 'gemini-3-pro'
 
 const MODELS: { id: GeminiModel; label: string; apiId: string }[] = [
-  { id: 'gemini-3-flash', label: 'Gemini 3 Flash', apiId: 'gemini-2.0-flash' },
+  { id: 'gemini-2-flash', label: 'Gemini 2 Flash', apiId: 'gemini-2.0-flash' },
+  { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', apiId: 'gemini-2.5-flash' },
   { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', apiId: 'gemini-2.5-pro' },
+  { id: 'gemini-3-flash', label: 'Gemini 3 Flash', apiId: 'gemini-3-flash-preview' },
+  { id: 'gemini-3-pro', label: 'Gemini 3 Pro', apiId: 'gemini-3-pro-preview' },
 ]
 
 const MOCK_AGENT_REPLY = `你好！我係 Learning IDE 嘅 AI Agent，我有以下工具可以用：
@@ -64,6 +84,10 @@ export interface AgentRunInfo {
   logs: string[]
   toolCalls?: Array<{ name: string; args: Record<string, unknown>; result: string; success: boolean }>
   error?: string
+  /** Duration in seconds for thinking time display */
+  thinkingDuration?: number
+  /** Timestamp when run started */
+  startedAt?: number
 }
 
 interface ChatPanelProps {
@@ -80,6 +104,9 @@ interface ChatPanelProps {
   onSelectChat?: (id: string) => void
   onRequestDeleteChat?: (id: string) => void
   onNewChat?: () => void
+  /** Render errors from Canvas (LaTeX/PlantUML) for agent auto-fix */
+  pendingRenderErrors?: RenderErrorWithContext[]
+  onClearRenderErrors?: () => void
 }
 
 export function ChatPanel({
@@ -94,6 +121,8 @@ export function ChatPanel({
   onSelectChat,
   onRequestDeleteChat,
   onNewChat,
+  pendingRenderErrors,
+  onClearRenderErrors,
 }: ChatPanelProps) {
   const [mode, setMode] = useState<ChatMode>('agent')
   const [model, setModel] = useState<GeminiModel>('gemini-3-flash')
@@ -104,7 +133,13 @@ export function ChatPanel({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   /** Live log lines while agent is running (Cursor-style real-time stream) */
-  const [liveAgentRun, setLiveAgentRun] = useState<{ logs: string[] } | null>(null)
+  const [liveAgentRun, setLiveAgentRun] = useState<{ logs: string[]; startedAt: number } | null>(null)
+  /** Live streaming text (typewriter effect) */
+  const [streamingText, setStreamingText] = useState<{ text: string; isThinking: boolean } | null>(null)
+  /** Elapsed time for live agent run display */
+  const [elapsedTime, setElapsedTime] = useState<number>(0)
+  /** Collapsed state for agent run blocks */
+  const [collapsedRuns, setCollapsedRuns] = useState<Set<number>>(new Set())
   /** Image attached via chat bar (upload or paste); takes precedence over canvas attachedImage when sending. */
   const [pendingImage, setPendingImage] = useState<string | null>(null)
   const [dropdownOpen, setDropdownOpen] = useState<'mode' | 'model' | null>(null)
@@ -173,6 +208,18 @@ export function ChatPanel({
     el.scrollTo({ left: el.scrollWidth, behavior: 'smooth' })
   }, [chatTabs?.length])
 
+  // Update elapsed time while agent is running
+  useEffect(() => {
+    if (!liveAgentRun) {
+      setElapsedTime(0)
+      return
+    }
+    const interval = setInterval(() => {
+      setElapsedTime(Math.floor((Date.now() - liveAgentRun.startedAt) / 1000))
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [liveAgentRun])
+
   const send = async () => {
     const text = input.trim()
     if (!text && !imageToSend) return
@@ -198,7 +245,20 @@ export function ChatPanel({
         text: m.text,
       }))
       if (mode === 'agent') {
-        setLiveAgentRun({ logs: [] })
+        const runStartTime = Date.now()
+        setLiveAgentRun({ logs: [], startedAt: runStartTime })
+        setStreamingText(null)
+        // Convert RenderErrorWithContext to RenderError for agent
+        const renderErrorsForAgent: RenderError[] | undefined =
+          pendingRenderErrors && pendingRenderErrors.length > 0
+            ? pendingRenderErrors.map(e => ({
+                type: e.type,
+                noteId: e.noteId,
+                sectionId: e.sectionId,
+                content: e.content,
+                errorMessage: e.errorMessage,
+              }))
+            : undefined
         const result = await runAgentChatWithTools({
           apiKey: apiKey!,
           modelApiId: apiId,
@@ -207,11 +267,21 @@ export function ChatPanel({
           agentContext: { ...agentContext, imageUrl: imageToSendThisTurn ?? undefined },
           onToolAction,
           onLog: (line) => {
-            setLiveAgentRun(prev => prev ? { logs: [...prev.logs, line] } : null)
+            setLiveAgentRun(prev => prev ? { ...prev, logs: [...prev.logs, line] } : null)
+          },
+          onStreamingText: (streamText, isThinking) => {
+            setStreamingText({ text: streamText, isThinking })
           },
           attachedImage: imageToSendThisTurn ?? undefined,
+          renderErrors: renderErrorsForAgent,
         })
+        // Clear render errors after agent processes them
+        if (renderErrorsForAgent && onClearRenderErrors) {
+          onClearRenderErrors()
+        }
+        const thinkingDuration = Math.floor((Date.now() - runStartTime) / 1000)
         setLiveAgentRun(null)
+        setStreamingText(null)
         chatLogToTerminal('agent', {
           text: result.text,
           logs: result.logs,
@@ -225,6 +295,7 @@ export function ChatPanel({
             logs: result.logs ?? [],
             toolCalls: result.toolCalls,
             error: result.error,
+            thinkingDuration,
           },
         }])
       } else {
@@ -234,6 +305,7 @@ export function ChatPanel({
       }
     } catch (e) {
       setLiveAgentRun(null)
+      setStreamingText(null)
       const errMsg = e instanceof Error ? e.message : String(e)
       const isFetchFailed = /failed to fetch|network|networkerror/i.test(errMsg)
       const hint = isFetchFailed
@@ -246,49 +318,130 @@ export function ChatPanel({
     }
   }
 
+  /** Toggle collapse state for a specific run block */
+  const toggleRunCollapse = (index: number) => {
+    setCollapsedRuns(prev => {
+      const next = new Set(prev)
+      if (next.has(index)) {
+        next.delete(index)
+      } else {
+        next.add(index)
+      }
+      return next
+    })
+  }
+
+  /** Format time duration as "Xs" or "Xm Xs" */
+  const formatDuration = (seconds: number): string => {
+    if (seconds < 60) return `${seconds}s`
+    const mins = Math.floor(seconds / 60)
+    const secs = seconds % 60
+    return `${mins}m ${secs}s`
+  }
+
   /** Render Cursor-style agent run block (live or completed) */
-  const renderAgentRunBlock = (run: { logs: string[]; toolCalls?: AgentRunInfo['toolCalls']; error?: string }, isLive?: boolean) => {
+  const renderAgentRunBlock = (
+    run: { logs: string[]; toolCalls?: AgentRunInfo['toolCalls']; error?: string; thinkingDuration?: number },
+    isLive?: boolean,
+    messageIndex?: number
+  ) => {
     const hasToolCalls = run.toolCalls && run.toolCalls.length > 0
+    const isCollapsed = messageIndex !== undefined && collapsedRuns.has(messageIndex)
+    const toolCount = run.toolCalls?.length ?? 0
+    const successCount = run.toolCalls?.filter(t => t.success).length ?? 0
+    const failCount = toolCount - successCount
+
     return (
       <div className={`ide-chat-agent-run ${isLive ? 'ide-chat-agent-run--live' : ''}`}>
-        <div className="ide-chat-agent-run-header">
+        <button
+          type="button"
+          className="ide-chat-agent-run-header"
+          onClick={() => messageIndex !== undefined && !isLive && toggleRunCollapse(messageIndex)}
+          style={{ cursor: isLive ? 'default' : 'pointer', width: '100%', textAlign: 'left' }}
+        >
           <span className="ide-chat-agent-run-dot" />
-          {isLive ? 'Agent running…' : 'Agent run'}
-        </div>
-        <div className="ide-chat-agent-run-steps">
-          {hasToolCalls && !isLive
-            ? run.toolCalls!.map((tc, idx) => (
-                <div key={idx} className="ide-chat-agent-step-group">
-                  <div className="ide-chat-agent-step ide-chat-agent-step--tool">
-                    <span className="ide-chat-agent-step-name">{tc.name}</span>
-                    <span className="ide-chat-agent-step-args">
-                      {Object.keys(tc.args).length ? JSON.stringify(tc.args) : '()'}
+          <span className="ide-chat-agent-run-title">
+            {isLive ? (
+              <>Agent running… <span className="ide-chat-agent-run-time">{formatDuration(elapsedTime)}</span></>
+            ) : (
+              <>
+                Agent
+                {toolCount > 0 && (
+                  <span className="ide-chat-agent-run-stats">
+                    <span className="ide-chat-agent-run-stat ide-chat-agent-run-stat--tool">
+                      {toolCount} tool{toolCount !== 1 ? 's' : ''}
                     </span>
+                    {successCount > 0 && (
+                      <span className="ide-chat-agent-run-stat ide-chat-agent-run-stat--ok">✓ {successCount}</span>
+                    )}
+                    {failCount > 0 && (
+                      <span className="ide-chat-agent-run-stat ide-chat-agent-run-stat--error">✗ {failCount}</span>
+                    )}
+                  </span>
+                )}
+                {run.thinkingDuration && run.thinkingDuration > 0 && (
+                  <span className="ide-chat-agent-run-time">Thought {formatDuration(run.thinkingDuration)}</span>
+                )}
+              </>
+            )}
+          </span>
+          {!isLive && (
+            <span className={`ide-chat-agent-run-chevron ${isCollapsed ? 'ide-chat-agent-run-chevron--collapsed' : ''}`}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M6 9l6 6 6-6" />
+              </svg>
+            </span>
+          )}
+        </button>
+        {!isCollapsed && (
+          <div className="ide-chat-agent-run-steps">
+            {hasToolCalls && !isLive
+              ? run.toolCalls!.map((tc, idx) => (
+                  <div key={idx} className="ide-chat-agent-step-group">
+                    <div className="ide-chat-agent-step ide-chat-agent-step--tool">
+                      <span className="ide-chat-agent-step-arrow">→</span>
+                      <span className="ide-chat-agent-step-name">{tc.name}</span>
+                      {Object.keys(tc.args).length > 0 && (
+                        <span className="ide-chat-agent-step-args">
+                          ({Object.entries(tc.args).map(([k, v]) => `${k}: ${typeof v === 'string' ? v.slice(0, 30) : JSON.stringify(v)}`).join(', ').slice(0, 80)}{Object.keys(tc.args).length > 3 ? '…' : ''})
+                        </span>
+                      )}
+                    </div>
+                    <div className={`ide-chat-agent-step ide-chat-agent-step--result ${tc.success ? 'ide-chat-agent-step--ok' : 'ide-chat-agent-step--error'}`}>
+                      <span className="ide-chat-agent-step-arrow">←</span>
+                      {tc.success ? '✓' : '✗'} {tc.result.slice(0, 150)}{tc.result.length > 150 ? '…' : ''}
+                    </div>
                   </div>
-                  <div className={`ide-chat-agent-step ide-chat-agent-step--result ${tc.success ? 'ide-chat-agent-step--ok' : 'ide-chat-agent-step--error'}`}>
-                    {tc.success ? '✓' : '✗'} {tc.result.slice(0, 200)}{tc.result.length > 200 ? '…' : ''}
-                  </div>
-                </div>
-              ))
-            : run.logs.map((line, idx) => {
-                const layer = /^\[Layer\]\s*(.+)$/.exec(line)
-                const skill = /^\[Skill\]\s*(.+)$/.exec(line)
-                const toolCall = /^\[Tool\]\s*(.+)$/.exec(line)
-                const toolResult = /^\[Tool\]\s*\w+\s*→\s*(ok|error):\s*(.+)$/.exec(line)
-                let stepClass = 'ide-chat-agent-step--log'
-                if (layer) stepClass = 'ide-chat-agent-step--layer'
-                else if (skill) stepClass = 'ide-chat-agent-step--skill'
-                else if (toolResult) stepClass = toolResult[1] === 'ok' ? 'ide-chat-agent-step--ok' : 'ide-chat-agent-step--error'
-                else if (toolCall) stepClass = 'ide-chat-agent-step--tool'
-                return (
-                  <div key={idx} className={`ide-chat-agent-step ${stepClass}`}>
-                    {line}
-                  </div>
-                )
-              })}
-        </div>
-        {run.error && !isLive && (
-          <div className="ide-chat-agent-run-error">{run.error}</div>
+                ))
+              : run.logs.map((line, idx) => {
+                  const layer = /^\[Layer\]\s*(.+)$/.exec(line)
+                  const skill = /^\[Skill\]\s*(.+)$/.exec(line)
+                  const toolCall = /^\[Tool\]\s*(.+)$/.exec(line)
+                  const toolResult = /^\[Tool\]\s*\w+\s*→\s*(ok|error):\s*(.+)$/.exec(line)
+                  const thinking = /^\[Thinking\]\s*(.+)$/.exec(line)
+                  const model = /^\[Model\]\s*(.+)$/.exec(line)
+                  let stepClass = 'ide-chat-agent-step--log'
+                  let icon = ''
+                  if (layer) { stepClass = 'ide-chat-agent-step--layer'; icon = '◆' }
+                  else if (skill) { stepClass = 'ide-chat-agent-step--skill'; icon = '◈' }
+                  else if (toolResult) { stepClass = toolResult[1] === 'ok' ? 'ide-chat-agent-step--ok' : 'ide-chat-agent-step--error'; icon = '←' }
+                  else if (toolCall) { stepClass = 'ide-chat-agent-step--tool'; icon = '→' }
+                  else if (thinking) { stepClass = 'ide-chat-agent-step--thinking'; icon = '💭' }
+                  else if (model) { stepClass = 'ide-chat-agent-step--model'; icon = '⚡' }
+                  return (
+                    <div key={idx} className={`ide-chat-agent-step ${stepClass}`}>
+                      {icon && <span className="ide-chat-agent-step-icon">{icon}</span>}
+                      {line.replace(/^\[(Layer|Skill|Tool|Thinking|Model)\]\s*/, '')}
+                    </div>
+                  )
+                })}
+          </div>
+        )}
+        {run.error && !isLive && !isCollapsed && (
+          <div className="ide-chat-agent-run-error">
+            <span className="ide-chat-agent-run-error-icon">⚠</span>
+            {run.error}
+          </div>
         )}
       </div>
     )
@@ -348,13 +501,20 @@ export function ChatPanel({
                 <img src={msg.imageDataUrl} alt="Attached" className="ide-chat-msg-image" />
               </div>
             )}
-            {msg.role === 'agent' && msg.agentRun && (msg.agentRun.logs.length > 0 || (msg.agentRun.toolCalls?.length ?? 0) > 0) && renderAgentRunBlock(msg.agentRun)}
+            {msg.role === 'agent' && msg.agentRun && (msg.agentRun.logs.length > 0 || (msg.agentRun.toolCalls?.length ?? 0) > 0) && renderAgentRunBlock(msg.agentRun, false, i)}
             <div className={msg.agentRun ? 'ide-chat-agent-reply' : ''}>{msg.text}</div>
           </div>
         ))}
         {loading && mode === 'agent' && (
           <div className="ide-chat-msg agent ide-chat-msg--agent-run">
             {liveAgentRun ? renderAgentRunBlock(liveAgentRun, true) : <div className="ide-chat-loading">思考中…</div>}
+            {streamingText && (
+              <div className={`ide-chat-streaming ${streamingText.isThinking ? 'ide-chat-streaming--thinking' : ''}`}>
+                {streamingText.isThinking && <span className="ide-chat-streaming-label">Thinking: </span>}
+                <span className="ide-chat-streaming-text">{streamingText.text}</span>
+                <span className="ide-chat-streaming-cursor">▊</span>
+              </div>
+            )}
             <div ref={liveRunEndRef} />
           </div>
         )}

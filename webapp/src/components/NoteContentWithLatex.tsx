@@ -1,9 +1,16 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useState, useEffect, useRef, type ReactNode } from 'react'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 import { encode } from 'plantuml-encoder'
 
 export type ContentSegment = { type: 'text'; value: string } | { type: 'display'; value: string } | { type: 'inline'; value: string }
+
+/** Render error info for auto-fix */
+export interface RenderErrorInfo {
+  type: 'latex' | 'plantuml'
+  content: string
+  errorMessage: string
+}
 
 /** PlantUML server: in dev use Vite proxy (same-origin); in prod use public server. PNG endpoint is most reliable. */
 const PLANTUML_IMG_BASE =
@@ -48,23 +55,41 @@ function findBalancedBraces(s: string, openIndex: number): { content: string; en
 
 /** Find next \section{, \subsection{, \subsubsection{, \[, \begin{itemize}, \begin{enumerate}, or $$ */
 function nextBlockStart(s: string, from: number): { kind: string; index: number; endTag?: string } | null {
+  // Collect all potential matches and return the EARLIEST one
+  const candidates: { kind: string; index: number; endTag?: string }[] = []
+
+  // Check for \section, \subsection, \subsubsection
   const sectionRe = /\\(section|subsection|subsubsection)\s*\{/g
   sectionRe.lastIndex = from
-  let m = sectionRe.exec(s)
-  if (m) return { kind: m[1], index: m.index }
+  const sectionMatch = sectionRe.exec(s)
+  if (sectionMatch) {
+    candidates.push({ kind: sectionMatch[1], index: sectionMatch.index })
+  }
 
+  // Check for \[
   const bracketOpen = s.indexOf('\\[', from)
-  if (bracketOpen !== -1) return { kind: 'display_bracket', index: bracketOpen }
+  if (bracketOpen !== -1) {
+    candidates.push({ kind: 'display_bracket', index: bracketOpen })
+  }
 
+  // Check for \begin{...}
   const beginRe = /\\begin\s*\{(\w+)\}/g
   beginRe.lastIndex = from
-  m = beginRe.exec(s)
-  if (m) return { kind: 'begin', index: m.index, endTag: m[1] }
+  const beginMatch = beginRe.exec(s)
+  if (beginMatch) {
+    candidates.push({ kind: 'begin', index: beginMatch.index, endTag: beginMatch[1] })
+  }
 
+  // Check for $$
   const dd = s.indexOf('$$', from)
-  if (dd !== -1) return { kind: '$$', index: dd }
+  if (dd !== -1) {
+    candidates.push({ kind: '$$', index: dd })
+  }
 
-  return null
+  // Return the earliest match
+  if (candidates.length === 0) return null
+  candidates.sort((a, b) => a.index - b.index)
+  return candidates[0]
 }
 
 /** Find next PlantUML block (@startuml...@enduml or @startmindmap...@endmindmap etc.) from fromIndex. Returns { start, end, source } or null. */
@@ -316,11 +341,28 @@ function parseInline(text: string): InlineSeg[] {
   return expand(segments)
 }
 
-function renderLatex(latex: string, displayMode: boolean): string {
+/** Render LaTeX; returns { html, error? } */
+function renderLatex(latex: string, displayMode: boolean): { html: string; error?: string } {
   try {
-    return katex.renderToString(latex, { displayMode, throwOnError: false })
-  } catch {
-    return `<span class="katex-error" title="LaTeX error">${escapeHtml(latex)}</span>`
+    // Try with throwOnError: true first to detect parse errors
+    const html = katex.renderToString(latex, { displayMode, throwOnError: true })
+    return { html }
+  } catch (e) {
+    // KaTeX threw an error - try again with throwOnError: false for partial rendering
+    const errorMsg = e instanceof Error ? e.message : 'Unknown LaTeX error'
+    try {
+      const html = katex.renderToString(latex, { displayMode, throwOnError: false })
+      // If it still produces output, return it with the error
+      if (html && !html.includes('katex-error')) {
+        return { html, error: errorMsg }
+      }
+    } catch {
+      // Fallback failed too
+    }
+    return {
+      html: `<span class="katex-error" title="${escapeHtml(errorMsg)}">${escapeHtml(latex)}</span>`,
+      error: errorMsg,
+    }
   }
 }
 
@@ -343,9 +385,31 @@ function encodePlantUmlUrl(source: string): string | null {
 }
 
 /** Renders a PlantUML diagram with fallback on load error (e.g. server unreachable or invalid diagram). */
-function PlantUmlBlock({ source, className }: { source: string; className?: string }) {
+function PlantUmlBlock({
+  source,
+  className,
+  onError,
+}: {
+  source: string
+  className?: string
+  onError?: (err: RenderErrorInfo) => void
+}) {
   const [loadError, setLoadError] = useState(false)
   const url = useMemo(() => encodePlantUmlUrl(source), [source])
+  const errorReported = useRef(false)
+
+  // Report encoding error if URL generation failed
+  useEffect(() => {
+    if (!url && !errorReported.current) {
+      errorReported.current = true
+      onError?.({
+        type: 'plantuml',
+        content: source,
+        errorMessage: 'Failed to encode PlantUML source - check syntax',
+      })
+    }
+  }, [url, source, onError])
+
   if (!url) {
     return <pre className={`ide-plantuml-fallback ${className ?? ''}`.trim()}>{source}</pre>
   }
@@ -365,7 +429,17 @@ function PlantUmlBlock({ source, className }: { source: string; className?: stri
         className="ide-plantuml-img"
         loading="lazy"
         referrerPolicy="no-referrer"
-        onError={() => setLoadError(true)}
+        onError={() => {
+          setLoadError(true)
+          if (!errorReported.current) {
+            errorReported.current = true
+            onError?.({
+              type: 'plantuml',
+              content: source,
+              errorMessage: 'PlantUML server returned error - diagram syntax may be invalid',
+            })
+          }
+        }}
       />
       <figcaption className="ide-plantuml-caption">
         Rendered by plantuml.com (banner/QR in image is from their server).
@@ -374,17 +448,25 @@ function PlantUmlBlock({ source, className }: { source: string; className?: stri
   )
 }
 
-function renderInlineSegment(seg: InlineSeg, key: number): ReactNode {
+function renderInlineSegment(
+  seg: InlineSeg,
+  key: number,
+  onError?: (err: RenderErrorInfo) => void
+): ReactNode {
   if (seg.type === 'text') return <span key={key}>{seg.value}</span>
-  if (seg.type === 'bold') return <strong key={key} className="ide-note-bold">{renderInlineContent(seg.value)}</strong>
-  if (seg.type === 'italic') return <em key={key} className="ide-note-italic">{renderInlineContent(seg.value)}</em>
-  if (seg.type === 'code') return <code key={key} className="ide-note-code">{renderInlineContent(seg.value)}</code>
+  if (seg.type === 'bold') return <strong key={key} className="ide-note-bold">{renderInlineContentWithErrors(seg.value, onError)}</strong>
+  if (seg.type === 'italic') return <em key={key} className="ide-note-italic">{renderInlineContentWithErrors(seg.value, onError)}</em>
+  if (seg.type === 'code') return <code key={key} className="ide-note-code">{renderInlineContentWithErrors(seg.value, onError)}</code>
   if (seg.type === 'latex') {
+    const { html, error } = renderLatex(seg.value, false)
+    if (error) {
+      onError?.({ type: 'latex', content: seg.value, errorMessage: error })
+    }
     return (
       <span
         key={key}
         className="ide-latex-inline"
-        dangerouslySetInnerHTML={{ __html: renderLatex(seg.value, false) }}
+        dangerouslySetInnerHTML={{ __html: html }}
       />
     )
   }
@@ -396,29 +478,59 @@ function renderInlineContent(content: string): ReactNode[] {
   return segments.map((seg, i) => renderInlineSegment(seg, i))
 }
 
+function renderInlineContentWithErrors(
+  content: string,
+  onError?: (err: RenderErrorInfo) => void
+): ReactNode[] {
+  const segments = parseInline(content)
+  return segments.map((seg, i) => renderInlineSegment(seg, i, onError))
+}
+
 interface NoteContentWithLatexProps {
   content: string
   className?: string
+  /** Callback for render errors (LaTeX/PlantUML) */
+  onRenderError?: (err: RenderErrorInfo) => void
 }
 
-export function NoteContentWithLatex({ content, className }: NoteContentWithLatexProps) {
+export function NoteContentWithLatex({ content, className, onRenderError }: NoteContentWithLatexProps) {
   const blocks = useMemo(() => parseBlocks(content), [content])
+  const reportedErrors = useRef<Set<string>>(new Set())
+
+  // Helper to report error only once per unique content
+  const reportError = (err: RenderErrorInfo) => {
+    const key = `${err.type}:${err.content.slice(0, 100)}`
+    if (!reportedErrors.current.has(key)) {
+      reportedErrors.current.add(key)
+      onRenderError?.(err)
+    }
+  }
+
+  // Reset reported errors when content changes
+  useEffect(() => {
+    reportedErrors.current.clear()
+  }, [content])
+
   return (
     <div className={`ide-note-body ${className ?? ''}`.trim()}>
       {blocks.map((block, i) => {
         if (block.type === 'plantuml' && block.plantuml) {
           return (
             <div key={i} className="ide-plantuml-block">
-              <PlantUmlBlock source={block.plantuml} />
+              <PlantUmlBlock source={block.plantuml} onError={reportError} />
             </div>
           )
         }
         if (block.type === 'display_math' && block.latex) {
+          const { html, error } = renderLatex(block.latex, true)
+          if (error) {
+            reportError({ type: 'latex', content: block.latex, errorMessage: error })
+          }
           return (
             <div
               key={i}
               className="ide-latex-block"
-              dangerouslySetInnerHTML={{ __html: renderLatex(block.latex, true) }}
+              dangerouslySetInnerHTML={{ __html: html }}
             />
           )
         }
@@ -426,7 +538,7 @@ export function NoteContentWithLatex({ content, className }: NoteContentWithLate
           const Tag = block.type
           return (
             <Tag key={i} className={`ide-note-${block.type}`}>
-              {renderInlineContent(block.content)}
+              {renderInlineContentWithErrors(block.content, reportError)}
             </Tag>
           )
         }
@@ -435,7 +547,7 @@ export function NoteContentWithLatex({ content, className }: NoteContentWithLate
             <ul key={i} className="ide-note-ul">
               {block.items.map((item, j) => (
                 <li key={j} className="ide-note-li">
-                  {renderInlineContent(item)}
+                  {renderInlineContentWithErrors(item, reportError)}
                 </li>
               ))}
             </ul>
@@ -446,7 +558,7 @@ export function NoteContentWithLatex({ content, className }: NoteContentWithLate
             <ol key={i} className="ide-note-ol">
               {block.items.map((item, j) => (
                 <li key={j} className="ide-note-li">
-                  {renderInlineContent(item)}
+                  {renderInlineContentWithErrors(item, reportError)}
                 </li>
               ))}
             </ol>
@@ -457,11 +569,11 @@ export function NoteContentWithLatex({ content, className }: NoteContentWithLate
           return (
             <p key={i} className="ide-note-p">
               {lines.length === 1
-                ? renderInlineContent(block.content)
+                ? renderInlineContentWithErrors(block.content, reportError)
                 : lines.map((line, j) => (
                     <span key={j}>
                       {j > 0 ? <br /> : null}
-                      {renderInlineContent(line)}
+                      {renderInlineContentWithErrors(line, reportError)}
                     </span>
                   ))}
             </p>

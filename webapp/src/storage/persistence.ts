@@ -13,9 +13,14 @@ const KEYS = {
   CANVAS_OVERLAYS: 'learning_ide_canvas_overlays',
 } as const
 
+// Max entries kept in localStorage to avoid unbounded growth.
 const TIMELINE_CAP = 200
-const CHAT_CAP = 100
+// Chat history cap per thread. Increase so refresh is less likely to "lose" recent turns.
+const CHAT_CAP = 300
+// Debounce for most saves (notes, timeline, overlays). Chat uses a shorter debounce to
+// reduce risk of losing the last messages if the tab is closed or refreshed immediately.
 const DEBOUNCE_MS = 300
+const CHAT_SAVE_DEBOUNCE_MS = 80
 
 /** Stored chat message (serializable; no blob URLs). imageDataUrl is optional for user messages with attached image. */
 export interface StoredChatMessage {
@@ -27,6 +32,8 @@ export interface StoredChatMessage {
     logs: string[]
     toolCalls?: Array<{ name: string; args: Record<string, unknown>; result: string; success: boolean }>
     error?: string
+    /** Duration in seconds for thinking time display */
+    thinkingDuration?: number
   }
 }
 
@@ -38,11 +45,6 @@ export interface StoredChatThread {
   createdAt: number
   updatedAt: number
 }
-
-let notesSaveTimer: ReturnType<typeof setTimeout> | null = null
-let timelineSaveTimer: ReturnType<typeof setTimeout> | null = null
-let chatSaveTimer: ReturnType<typeof setTimeout> | null = null
-let overlaysSaveTimer: ReturnType<typeof setTimeout> | null = null
 
 function safeParse<T>(key: string, fallback: T): T {
   try {
@@ -66,8 +68,8 @@ function safeSet(key: string, value: unknown): void {
 export function loadNotes(): Note[] | null {
   const data = safeParse<Note[] | null>(KEYS.NOTES, null)
   if (!Array.isArray(data) || data.length === 0) return null
-  // Basic shape check
-  const valid = data.every(
+  // Basic shape check – keep valid notes, drop corrupted ones instead of discarding all
+  const valid = data.filter(
     (n) =>
       n &&
       typeof n.id === 'string' &&
@@ -75,16 +77,12 @@ export function loadNotes(): Note[] | null {
       Array.isArray(n.sections) &&
       typeof n.createdAt === 'number'
   )
-  return valid ? data : null
+  return valid.length > 0 ? valid : null
 }
 
-/** Save notes (debounced). */
+/** Save notes (immediate, local-only). Cloud layer adds its own debounce. */
 export function saveNotes(notes: Note[]): void {
-  if (notesSaveTimer) clearTimeout(notesSaveTimer)
-  notesSaveTimer = setTimeout(() => {
-    notesSaveTimer = null
-    safeSet(KEYS.NOTES, notes)
-  }, DEBOUNCE_MS)
+  safeSet(KEYS.NOTES, notes)
 }
 
 /** Load timeline from storage. */
@@ -102,13 +100,9 @@ export function loadTimeline(): TimelineAction[] {
   return valid.slice(-TIMELINE_CAP)
 }
 
-/** Save timeline (debounced, capped). */
+/** Save timeline (immediate, capped). Cloud layer adds its own debounce. */
 export function saveTimeline(timeline: TimelineAction[]): void {
-  if (timelineSaveTimer) clearTimeout(timelineSaveTimer)
-  timelineSaveTimer = setTimeout(() => {
-    timelineSaveTimer = null
-    safeSet(KEYS.TIMELINE, timeline.slice(-TIMELINE_CAP))
-  }, DEBOUNCE_MS)
+  safeSet(KEYS.TIMELINE, timeline.slice(-TIMELINE_CAP))
 }
 
 /** Legacy: load flat chat history (single thread) from storage. */
@@ -127,11 +121,7 @@ export function loadChat(): StoredChatMessage[] {
 
 /** Legacy: save flat chat history (kept for backward compatibility). */
 export function saveChat(messages: StoredChatMessage[]): void {
-  if (chatSaveTimer) clearTimeout(chatSaveTimer)
-  chatSaveTimer = setTimeout(() => {
-    chatSaveTimer = null
-    safeSet(KEYS.CHAT, messages.slice(-CHAT_CAP))
-  }, DEBOUNCE_MS)
+  safeSet(KEYS.CHAT, messages.slice(-CHAT_CAP))
 }
 
 /** Load multi-chat threads from storage, migrating legacy flat history to a single thread if needed. */
@@ -169,16 +159,12 @@ export function loadChatThreads(): StoredChatThread[] {
   ]
 }
 
-/** Save multi-chat threads (debounced, capped). */
+/** Save multi-chat threads (immediate, capped). Cloud layer adds its own debounce. */
 export function saveChatThreads(threads: StoredChatThread[]): void {
-  if (chatSaveTimer) clearTimeout(chatSaveTimer)
-  chatSaveTimer = setTimeout(() => {
-    chatSaveTimer = null
-    const trimmed = threads
-      .slice(-CHAT_CAP)
-      .map((t) => ({ ...t, messages: t.messages.slice(-CHAT_CAP) }))
-    safeSet(KEYS.CHAT, trimmed)
-  }, DEBOUNCE_MS)
+  const trimmed = threads
+    .slice(-CHAT_CAP)
+    .map((t) => ({ ...t, messages: t.messages.slice(-CHAT_CAP) }))
+  safeSet(KEYS.CHAT, trimmed)
 }
 
 /** Load canvas overlays (memo positions) from storage, keyed by note/file id. */
@@ -187,11 +173,7 @@ export function loadCanvasOverlays(): Record<string, unknown[]> {
   return data && typeof data === 'object' ? data : {}
 }
 
-/** Save canvas overlays (debounced). */
+/** Save canvas overlays (immediate). Cloud layer adds its own debounce. */
 export function saveCanvasOverlays(data: Record<string, unknown[]>): void {
-  if (overlaysSaveTimer) clearTimeout(overlaysSaveTimer)
-  overlaysSaveTimer = setTimeout(() => {
-    overlaysSaveTimer = null
-    safeSet(KEYS.CANVAS_OVERLAYS, data)
-  }, DEBOUNCE_MS)
+  safeSet(KEYS.CANVAS_OVERLAYS, data)
 }

@@ -364,9 +364,6 @@ export async function getFileUrl(_id: string, driveFileId?: string): Promise<str
   return null
 }
 
-/**
- * Sync local data to cloud (for first-time sync after login)
- */
 export async function syncLocalToCloud(): Promise<boolean> {
   if (!isAuthenticated()) return false
   

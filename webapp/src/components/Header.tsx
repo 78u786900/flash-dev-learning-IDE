@@ -1,4 +1,5 @@
 import { LoginButton } from './LoginButton'
+import { StorageUsageIndicator } from './StorageUsageIndicator'
 
 interface HeaderProps {
   onToggleLock: () => void
@@ -35,6 +36,7 @@ export function Header({
       </nav>
       <span className="ide-header-title">flash.dev</span>
       <div className="ide-header-actions">
+        <StorageUsageIndicator />
         <LoginButton />
         <button
           type="button"

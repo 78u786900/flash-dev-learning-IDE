@@ -5,7 +5,7 @@ import { getPdfPageTextOnDemand, getPdfPageImageOnDemand } from './agent/tools/p
 import { embedForSearch as embedForSearchApi } from './agent/tools/embedding'
 import { Header } from './components/Header'
 import { Sidebar } from './components/Sidebar'
-import { Canvas } from './components/Canvas'
+import { Canvas, type RenderErrorWithContext } from './components/Canvas'
 import { FileViewer } from './components/FileViewer'
 import { CanvasAreaWithSelection, type CanvasOverlayMemo } from './components/CanvasAreaWithSelection'
 import { ChatPanel } from './components/ChatPanel'
@@ -155,6 +155,19 @@ function App() {
       return cast
     }
   )
+  /** Render errors from LaTeX/PlantUML for agent auto-fix */
+  const [pendingRenderErrors, setPendingRenderErrors] = useState<RenderErrorWithContext[]>([])
+  const handleRenderError = useCallback((err: RenderErrorWithContext) => {
+    setPendingRenderErrors(prev => {
+      // Dedupe by content
+      const key = `${err.type}:${err.noteId}:${err.sectionId}:${err.content.slice(0, 100)}`
+      if (prev.some(e => `${e.type}:${e.noteId}:${e.sectionId}:${e.content.slice(0, 100)}` === key)) return prev
+      return [...prev, err]
+    })
+  }, [])
+  const clearRenderErrors = useCallback(() => {
+    setPendingRenderErrors([])
+  }, [])
   const [history, setHistory] = useState<Array<{ notes: Note[]; files: DroppedFile[] }>>([])
   const [future, setFuture] = useState<Array<{ notes: Note[]; files: DroppedFile[] }>>([])
 
@@ -354,26 +367,41 @@ function App() {
     return newNote
   }, [logAction, pushHistory])
 
-  /** When authenticated, load notes/timeline/chat/overlays from Google Drive (cloud) */
+  /** When authenticated, load notes/timeline/chat/overlays from Google Drive (cloud).
+   * IMPORTANT: Local storage is the source of truth. Cloud data is only used to
+   * hydrate when local is effectively empty (first-time login / new browser).
+   * This avoids overwriting newer local changes with stale cloud snapshots when
+   * cloud saves fail.
+   */
   useEffect(() => {
     if (!isAuthenticated) return
     let cancelled = false
     loadAllFromCloud()
       .then((data) => {
         if (cancelled || !data) return
-        if (data.notes.length > 0) {
+        const hasLocalNotes =
+          notes.length > 0 &&
+          !(notes.length === 1 && notes[0].id === defaultNote.id)
+        const hasLocalTimeline = timeline.length > 0
+        const hasLocalChats = chatThreads.length > 0
+        const hasLocalOverlays = Object.keys(canvasOverlaysByKey).length > 0
+
+        // Only hydrate from cloud when local is effectively empty
+        if (data.notes.length > 0 && !hasLocalNotes) {
           setNotes(data.notes)
           setActiveNoteId((prev) => (data.notes.some((n) => n.id === prev) ? prev : data.notes[0].id))
         }
-        if (data.timeline.length > 0) setTimeline(data.timeline)
-        if (data.chatThreads.length > 0) {
+        if (data.timeline.length > 0 && !hasLocalTimeline) setTimeline(data.timeline)
+        if (data.chatThreads.length > 0 && !hasLocalChats) {
           setChatThreads(data.chatThreads)
           const sorted = [...data.chatThreads].sort(
             (a, b) => (b.updatedAt ?? b.createdAt ?? 0) - (a.updatedAt ?? a.createdAt ?? 0)
           )
           setActiveChatId(sorted[0]?.id ?? data.chatThreads[0].id)
         }
-        if (Object.keys(data.canvasOverlays).length > 0) setCanvasOverlaysByKey(data.canvasOverlays)
+        if (Object.keys(data.canvasOverlays).length > 0 && !hasLocalOverlays) {
+          setCanvasOverlaysByKey(data.canvasOverlays)
+        }
       })
       .catch((err) => console.error('Load from cloud failed', err))
     return () => { cancelled = true }
@@ -769,6 +797,7 @@ function App() {
                 onRequestDeleteCodeWindow={(sectionId, codeWindowId) =>
                   requestDeleteCodeWindow(displayNote.id, sectionId, codeWindowId)
                 }
+                onRenderError={handleRenderError}
               />
             ) : activeFile ? (
               <FileViewer
@@ -818,6 +847,8 @@ function App() {
             setChatThreads(prev => [...prev, newThread])
             setActiveChatId(newThread.id)
           }}
+          pendingRenderErrors={pendingRenderErrors}
+          onClearRenderErrors={clearRenderErrors}
         />
       </div>
       <StatusBar

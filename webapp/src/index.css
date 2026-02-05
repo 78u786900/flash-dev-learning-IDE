@@ -145,7 +145,66 @@ body {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+}
+
+/* Local storage usage indicator (next to Google login) */
+.ide-storage-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 12px;
+  background: rgba(40, 40, 40, 0.9);
+  border: 1px solid rgba(80, 80, 80, 0.9);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.ide-storage-bar {
+  width: 72px;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(30, 30, 30, 0.9);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.ide-storage-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #22c55e, #3b82f6);
+  transition: width 0.25s ease-out, background 0.25s ease-out;
+}
+
+.ide-storage-bar-fill--warn {
+  background: linear-gradient(90deg, #f97316, #ef4444);
+}
+
+.ide-storage-bar-fill--empty {
+  width: 15%;
+  background: rgba(75, 85, 99, 0.7);
+}
+
+.ide-storage-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.ide-storage-percent {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.ide-storage-mode {
+  margin-left: 4px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(17, 24, 39, 0.9);
+  color: var(--text-dim);
+  font-size: 10px;
 }
 
 .ide-header-undo,
@@ -1667,7 +1726,8 @@ body {
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--bg-tertiary);
-  overflow: hidden;
+  /* Allow dropdown menus (mode/model) to extend outside the card without being clipped */
+  overflow: visible;
   margin: 14px 16px;
   padding: 0;
   display: flex;
@@ -1741,6 +1801,8 @@ body {
   font-weight: 500;
   cursor: pointer;
   transition: background-color 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+  /* Keep "∞ Agent" label on one line so the pill doesn't split into two rows */
+  white-space: nowrap;
 }
 .ide-chatbar-pill:hover {
   background-color: var(--bg-hover);
@@ -1806,10 +1868,13 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px 10px;
+  /* Slightly larger horizontal padding so the send button doesn't sit on the card edge */
+  padding: 8px 16px 10px;
   flex-shrink: 0;
   border-top: 1px solid var(--border);
   background: var(--bg-tertiary);
+  /* Keep controls on a single row in normal layouts */
+  flex-wrap: nowrap;
 }
 
 /* Model dropdown trigger: text + caret */
@@ -1826,6 +1891,8 @@ body {
   font-weight: 500;
   cursor: pointer;
   transition: color 0.15s ease;
+  /* Avoid breaking model names like "Gemini 3 Pro" into multiple lines */
+  white-space: nowrap;
 }
 
 .ide-chatbar-select:hover {
@@ -1841,7 +1908,8 @@ body {
 }
 
 .ide-chatbar-model {
-  min-width: 110px;
+  /* Slightly narrower so everything fits in one row with send button */
+  min-width: 130px;
 }
 
 /* Custom dropdown list: dark panel, opens upward */
@@ -1914,6 +1982,8 @@ body {
 .ide-chatbar-dropdown-label {
   flex: 1;
   min-width: 0;
+  /* Keep option labels on one line for cleaner dropdown (e.g. "Gemini 3 Pro") */
+  white-space: nowrap;
 }
 
 .ide-chatbar-dropdown-shortcut {
@@ -1934,9 +2004,11 @@ body {
 
 /* Send: circular light gray, upward arrow with chromatic aberration */
 .ide-chatbar-send {
-  margin-left: auto;
-  width: 36px;
-  height: 36px;
+  /* Keep send button close to the upload icon instead of creating a large flex gap */
+  margin-left: 8px;
+  /* Slightly smaller to avoid pushing other controls off the row and out of the card */
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: none;
   border-radius: 50%;
@@ -2133,6 +2205,23 @@ body {
   color: var(--text-dim);
 }
 
+.ide-chat-agent-step--thinking {
+  color: #a78bfa;
+  font-style: italic;
+  padding: 4px 12px;
+  background: rgba(167, 139, 250, 0.08);
+  border-radius: 4px;
+  margin: 2px 0;
+}
+
+.ide-chat-agent-step--model {
+  color: #60a5fa;
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
 .ide-chat-agent-run-error {
   padding: 8px 12px;
   font-size: 12px;
@@ -2151,6 +2240,122 @@ body {
   display: flex;
   flex-direction: column;
   align-items: stretch;
+}
+
+/* Cursor-style agent run header enhancements */
+.ide-chat-agent-run-header {
+  border: none;
+  background: transparent;
+  font-family: inherit;
+}
+
+.ide-chat-agent-run-title {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ide-chat-agent-run-time {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-weight: 400;
+  background: rgba(167, 139, 250, 0.15);
+  padding: 2px 6px;
+  border-radius: 4px;
+  margin-left: 4px;
+}
+
+.ide-chat-agent-run--live .ide-chat-agent-run-time {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+}
+
+.ide-chat-agent-run-stats {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 8px;
+}
+
+.ide-chat-agent-run-stat {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.ide-chat-agent-run-stat--tool {
+  background: rgba(99, 102, 241, 0.15);
+  color: #818cf8;
+}
+
+.ide-chat-agent-run-stat--ok {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+}
+
+.ide-chat-agent-run-stat--error {
+  background: rgba(244, 63, 94, 0.15);
+  color: #f43f5e;
+}
+
+.ide-chat-agent-run-chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-dim);
+  transition: transform 0.2s ease;
+}
+
+.ide-chat-agent-run-chevron--collapsed {
+  transform: rotate(-90deg);
+}
+
+/* Tool call arrow indicators */
+.ide-chat-agent-step-arrow {
+  color: var(--text-dim);
+  margin-right: 6px;
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  opacity: 0.7;
+}
+
+.ide-chat-agent-step--tool .ide-chat-agent-step-arrow {
+  color: #60a5fa;
+}
+
+.ide-chat-agent-step--ok .ide-chat-agent-step-arrow,
+.ide-chat-agent-step--error .ide-chat-agent-step-arrow {
+  color: var(--text-dim);
+}
+
+.ide-chat-agent-step-icon {
+  margin-right: 6px;
+  opacity: 0.8;
+}
+
+.ide-chat-agent-run-error-icon {
+  margin-right: 6px;
+}
+
+/* Improved step styling */
+.ide-chat-agent-step {
+  display: flex;
+  align-items: flex-start;
+}
+
+.ide-chat-agent-step--result {
+  margin-left: 12px;
+  padding-left: 12px;
+  border-left: 2px solid var(--border);
+}
+
+.ide-chat-agent-step--ok.ide-chat-agent-step--result {
+  border-left-color: rgba(34, 197, 94, 0.5);
+}
+
+.ide-chat-agent-step--error.ide-chat-agent-step--result {
+  border-left-color: rgba(244, 63, 94, 0.5);
 }
 
 .ide-chat-input {
@@ -2873,4 +3078,54 @@ body {
   --surface-hover: var(--bg-hover);
   --danger: #f43f5e;
   --danger-bg: rgba(244, 63, 94, 0.15);
+}
+
+/* Real-time streaming text (typewriter effect) */
+.ide-chat-streaming {
+  padding: 12px 16px;
+  margin: 8px 0;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.08) 0%, rgba(139, 92, 246, 0.08) 100%);
+  border-radius: 8px;
+  border-left: 3px solid #3b82f6;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+  min-height: 40px;
+  position: relative;
+  overflow: hidden;
+}
+
+.ide-chat-streaming--thinking {
+  background: linear-gradient(135deg, rgba(167, 139, 250, 0.12) 0%, rgba(192, 132, 252, 0.08) 100%);
+  border-left-color: #a78bfa;
+  font-style: italic;
+}
+
+.ide-chat-streaming-label {
+  color: #a78bfa;
+  font-weight: 600;
+  font-style: normal;
+  margin-right: 6px;
+}
+
+.ide-chat-streaming-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.ide-chat-streaming-cursor {
+  display: inline-block;
+  color: #3b82f6;
+  animation: blink-cursor 0.8s steps(2) infinite;
+  margin-left: 2px;
+  font-weight: bold;
+}
+
+.ide-chat-streaming--thinking .ide-chat-streaming-cursor {
+  color: #a78bfa;
+}
+
+@keyframes blink-cursor {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
 }

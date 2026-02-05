@@ -2,6 +2,10 @@ import type { AgentContext, ToolResult, ToolResultAction } from '../types'
 import type { CallGeminiFn } from './runGemini'
 
 function getNoteId(ctx: AgentContext): string | null {
+  // Prefer the note that was just created in this agent run (create_note tool),
+  // so follow-up tools like page_to_note attach sections to the intended note
+  // even if the model forgets to pass target_note_id explicitly.
+  if (ctx.lastCreatedNote?.id) return ctx.lastCreatedNote.id
   return ctx.note?.id ?? null
 }
 
@@ -50,6 +54,16 @@ export async function run_page_to_note(
   ctx: AgentContext,
   callGemini: CallGeminiFn
 ): Promise<ToolResult> {
+  // Validate page_number range if totalPdfPages is known
+  if (params.page_number) {
+    const pageNum = Number(params.page_number)
+    if (Number.isNaN(pageNum) || pageNum < 1) {
+      return { success: false, error: `無效嘅頁碼：${params.page_number}。頁碼必須係正整數。` }
+    }
+    if (ctx.totalPdfPages && pageNum > ctx.totalPdfPages) {
+      return { success: false, error: `頁碼 ${pageNum} 超出 PDF 總頁數（${ctx.totalPdfPages}）。請檢查頁碼範圍。` }
+    }
+  }
   let pageText =
     (params.page_text?.trim() && params.page_text) ||
     (params.page_number && ctx.pdfPageTexts?.[Number(params.page_number)])

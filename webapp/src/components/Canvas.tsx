@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import type { Note, Section, SectionRecording, SectionCodeWindow } from '../types'
-import { NoteContentWithLatex } from './NoteContentWithLatex'
+import { NoteContentWithLatex, type RenderErrorInfo } from './NoteContentWithLatex'
 import { transcribeWithGeminiFlash } from '../utils/audioTranscription'
 import { CodeRenderWindow } from './CodeRenderWindow'
 import { generateCodeWindowSource } from '../utils/geminiInline'
@@ -54,6 +54,12 @@ function RecordingAudio({ dataUrl, recId, className, controlsList }: { dataUrl: 
   )
 }
 
+/** Render error with note/section context for auto-fix */
+export interface RenderErrorWithContext extends RenderErrorInfo {
+  noteId: string
+  sectionId: string
+}
+
 interface CanvasProps {
   note: Note
   onUpdateSection: (sectionId: string, updater: (s: Section) => Section) => void
@@ -63,6 +69,8 @@ interface CanvasProps {
   onRequestDeleteSection?: (sectionId: string) => void
   onRequestDeleteRecording?: (sectionId: string, recId: string) => void
   onRequestDeleteCodeWindow?: (sectionId: string, codeWindowId: string) => void
+  /** Callback for LaTeX/PlantUML render errors (auto-fix feature) */
+  onRenderError?: (error: RenderErrorWithContext) => void
 }
 
 export function Canvas({
@@ -72,6 +80,7 @@ export function Canvas({
   onSectionDone,
   onRequestDeleteRecording,
   onRequestDeleteCodeWindow,
+  onRenderError,
 }: CanvasProps) {
   const [editingSectionId, setEditingSectionId] = useState<string | null>(null)
   const [editingCodeWindowId, setEditingCodeWindowId] = useState<string | null>(null)
@@ -668,7 +677,14 @@ export function Canvas({
               onKeyDown={e => e.key === 'Enter' && setEditingSectionId(section.id)}
               title="點擊編輯"
             >
-              <NoteContentWithLatex content={section.content || ''} />
+              <NoteContentWithLatex
+                content={section.content || ''}
+                onRenderError={
+                  onRenderError
+                    ? (err) => onRenderError({ ...err, noteId: note.id, sectionId: section.id })
+                    : undefined
+                }
+              />
             </div>
           )}
           <div className="ide-section-codewindows-actions">
