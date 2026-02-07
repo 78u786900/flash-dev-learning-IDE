@@ -21,7 +21,8 @@ import {
   loadFilesFromStorage as loadLocalFiles,
   saveFileToStorage as saveLocalFile,
   renameFileInStorage as renameLocalFile,
-  deleteFileFromStorage as deleteLocalFile
+  deleteFileFromStorage as deleteLocalFile,
+  getFileBlob as getLocalFileBlob
 } from './fileStorage'
 
 // Debounce timers
@@ -62,18 +63,21 @@ export async function loadAllFromCloud(): Promise<CloudStorageData | null> {
 }
 
 /**
- * Save all data to cloud storage
+ * Save all data to cloud storage.
+ * Preserves fileMetadata (managed by files API) by loading current storage first.
  */
 export async function saveAllToCloud(data: CloudStorageData): Promise<boolean> {
   if (!isAuthenticated()) return false
   
   try {
+    const current = await storageApi.loadAll()
+    const fileMetadata = current?.fileMetadata ?? []
     return await storageApi.saveAll({
       notes: data.notes,
       timeline: data.timeline,
       chatThreads: data.chatThreads,
       canvasOverlays: data.canvasOverlays,
-      fileMetadata: [] // File metadata is managed separately
+      fileMetadata
     })
   } catch (error) {
     console.error('Failed to save to cloud:', error)
@@ -254,44 +258,163 @@ export interface CloudFile extends DroppedFile {
   driveFileId?: string
 }
 
+/**
+ * Load files: ONLY from local storage. Never load from cloud in this step.
+ * Cloud sync is done separately in syncLocalWithCloud().
+ */
 export async function loadFiles(): Promise<CloudFile[]> {
-  if (isAuthenticated()) {
-    try {
-      const cloudFiles = await filesApi.list()
-      if (cloudFiles && cloudFiles.length > 0) {
-        // For cloud files, we need to get blob URLs
-        return cloudFiles.map(f => ({
-          id: f.id,
-          name: f.name,
-          type: f.type,
-          size: f.size,
-          addedAt: f.addedAt,
-          url: f.url || '', // Will be fetched on demand
-          driveFileId: f.driveFileId
-        }))
+  const localFiles = await loadLocalFiles()
+  return localFiles.map((f) => ({ ...f, driveFileId: undefined }))
+}
+
+/**
+ * Sync local files with cloud (runs after load when authenticated).
+ * - If cloud has more files → fetch those to local and add to list
+ * - If local has more files → upload those to cloud, load from local
+ * - Updates driveFileId on matched files
+ * Returns the merged list for state update.
+ */
+export async function syncLocalWithCloud(localFiles: CloudFile[]): Promise<CloudFile[]> {
+  if (!isAuthenticated()) return localFiles
+
+  try {
+    const driveFiles = await filesApi.list()
+    const driveById = new Map((driveFiles ?? []).map((d) => [d.id, d]))
+    const localById = new Map(localFiles.map((f) => [f.id, f]))
+    const result = localFiles.map((f) => ({ ...f }))
+
+    for (const f of result) {
+      const d = driveById.get(f.id)
+      if (d) {
+        f.driveFileId = d.driveFileId
+        driveById.delete(f.id)
       }
-    } catch (error) {
-      console.error('Cloud load files failed:', error)
     }
+
+    for (const [, d] of driveById) {
+      if (localById.has(d.id)) continue
+      const blob = await filesApi.download(d.id).catch(() => null)
+      let url = ''
+      if (blob) {
+        try {
+          await saveLocalFile(d.id, d.name, d.type, d.size, d.addedAt, blob)
+        } catch {}
+        url = URL.createObjectURL(blob)
+      }
+      const cloudFile: CloudFile = {
+        id: d.id,
+        name: d.name,
+        type: d.type,
+        size: d.size,
+        addedAt: d.addedAt,
+        url,
+        driveFileId: d.driveFileId
+      }
+      result.push(cloudFile)
+      localById.set(d.id, cloudFile)
+    }
+
+    for (const f of result) {
+      if (f.driveFileId) continue
+      if (!f.url?.startsWith('blob:')) continue
+      try {
+        const blob = await fetch(f.url).then((r) => r.blob())
+        const fileObj = new File([blob], f.name, { type: f.type })
+        const uploaded = await uploadFileForSync(f.id, f.addedAt, fileObj)
+        if (uploaded) f.driveFileId = uploaded.driveFileId
+      } catch (e) {
+        console.warn('Sync upload failed:', f.name, e)
+      }
+    }
+
+    result.sort((a, b) => a.addedAt - b.addedAt)
+    return result
+  } catch (error) {
+    console.error('Cloud sync failed:', error)
+    return localFiles
   }
-  return loadLocalFiles()
+}
+
+/** Verify a file exists on cloud by id (e.g. after upload). */
+export async function verifyFileOnCloud(id: string): Promise<boolean> {
+  if (!isAuthenticated()) return false
+  try {
+    const list = await filesApi.list()
+    return list?.some((f) => f.id === id) ?? false
+  } catch {
+    return false
+  }
 }
 
 export async function uploadFile(file: File): Promise<CloudFile | null> {
+  return uploadFileWithProgress(file, () => {})
+}
+
+/** Upload for sync: preserve local id and addedAt so Drive metadata matches local. */
+export async function uploadFileForSync(
+  id: string,
+  addedAt: number,
+  file: File
+): Promise<CloudFile | null> {
+  if (!isAuthenticated()) return null
+  try {
+    const uploaded = await filesApi.upload(file, { id, addedAt })
+    if (!uploaded) return null
+    try {
+      await saveLocalFile(uploaded.id, uploaded.name, uploaded.type, uploaded.size, uploaded.addedAt, file)
+    } catch (e) {
+      console.warn('Cache file to IndexedDB failed:', e)
+    }
+    return {
+      id: uploaded.id,
+      name: uploaded.name,
+      type: uploaded.type,
+      size: uploaded.size,
+      addedAt: uploaded.addedAt,
+      url: URL.createObjectURL(file),
+      driveFileId: uploaded.driveFileId
+    }
+  } catch (error) {
+    console.error('Cloud upload (sync) failed:', error)
+    return null
+  }
+}
+
+export async function uploadFileWithProgress(
+  file: File,
+  onProgress: (percent: number) => void
+): Promise<CloudFile | null> {
   const id = `f${Date.now()}_${Math.random().toString(36).slice(2)}`
   const addedAt = Date.now()
   
   if (isAuthenticated()) {
     try {
-      const uploaded = await filesApi.upload(file)
+      const uploaded = await filesApi.uploadWithProgress(file, onProgress)
       if (uploaded) {
+        const exists = await verifyFileOnCloud(uploaded.id)
+        if (!exists) {
+          console.warn('Upload succeeded but file not found on cloud:', uploaded.id)
+        }
+        try {
+          await saveLocalFile(
+            uploaded.id,
+            uploaded.name,
+            uploaded.type,
+            uploaded.size,
+            uploaded.addedAt,
+            file
+          )
+        } catch (e) {
+          console.warn('Cache file to IndexedDB failed:', e)
+        }
+        const cachedUrl = URL.createObjectURL(file)
         return {
           id: uploaded.id,
           name: uploaded.name,
           type: uploaded.type,
           size: uploaded.size,
           addedAt: uploaded.addedAt,
-          url: uploaded.url,
+          url: cachedUrl,
           driveFileId: uploaded.driveFileId
         }
       }
@@ -300,9 +423,10 @@ export async function uploadFile(file: File): Promise<CloudFile | null> {
     }
   }
   
-  // Fallback to local storage
+  onProgress(0)
   try {
     await saveLocalFile(id, file.name, file.type, file.size, addedAt, file)
+    onProgress(100)
     return {
       id,
       name: file.name,
@@ -320,9 +444,16 @@ export async function uploadFile(file: File): Promise<CloudFile | null> {
 export async function renameFile(id: string, newName: string, driveFileId?: string): Promise<boolean> {
   if (isAuthenticated() && driveFileId) {
     try {
-      return await filesApi.rename(driveFileId, newName)
+      const exists = await verifyFileOnCloud(id)
+      if (exists) {
+        const ok = await filesApi.rename(driveFileId, newName)
+        if (!ok) return false
+      }
+      await renameLocalFile(id, newName)
+      return true
     } catch (error) {
       console.error('Cloud rename failed:', error)
+      return false
     }
   }
   
@@ -338,17 +469,21 @@ export async function renameFile(id: string, newName: string, driveFileId?: stri
 export async function deleteFile(id: string, driveFileId?: string): Promise<boolean> {
   if (isAuthenticated() && driveFileId) {
     try {
-      return await filesApi.delete(driveFileId)
+      const exists = await verifyFileOnCloud(id)
+      if (exists) {
+        const ok = await filesApi.delete(driveFileId)
+        if (!ok) return false
+      }
     } catch (error) {
       console.error('Cloud delete failed:', error)
+      return false
     }
   }
-  
+
   try {
     await deleteLocalFile(id)
     return true
-  } catch (error) {
-    console.error('Local delete failed:', error)
+  } catch {
     return false
   }
 }
@@ -362,6 +497,30 @@ export async function getFileUrl(_id: string, driveFileId?: string): Promise<str
     }
   }
   return null
+}
+
+/**
+ * Fetch file from cloud and cache to IndexedDB for instant load on next view.
+ * Returns blob URL when successful.
+ */
+export async function fetchFileAndCache(
+  id: string,
+  name: string,
+  type: string,
+  size: number,
+  addedAt: number
+): Promise<string | null> {
+  const cached = await getLocalFileBlob(id)
+  if (cached) return URL.createObjectURL(cached)
+
+  const blob = await filesApi.download(id)
+  if (!blob) return null
+  try {
+    await saveLocalFile(id, name, type, size, addedAt, blob)
+  } catch (e) {
+    console.warn('Cache fetched file to IndexedDB failed:', e)
+  }
+  return URL.createObjectURL(blob)
 }
 
 export async function syncLocalToCloud(): Promise<boolean> {

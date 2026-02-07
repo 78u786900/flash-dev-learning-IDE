@@ -97,6 +97,51 @@ export const authApi = {
 
 // Storage API
 export const storageApi = {
+  async verify(data: {
+    notes: unknown[]
+    timeline: unknown[]
+    chatThreads: unknown[]
+    canvasOverlays: Record<string, unknown[]>
+    fileMetadata?: Array<{ id: string; name: string; type: string; size: number; addedAt: number; driveFileId?: string }>
+  }): Promise<{
+    ok: boolean
+    match: boolean
+    driveReachable: boolean
+    details: { notesMatch: boolean; timelineMatch: boolean; chatMatch: boolean; overlaysMatch: boolean; filesMatch: boolean }
+    driveCounts: { notes: number; timeline: number; chatThreads: number; totalMessages: number; overlaysKeys: number; filesCount: number }
+    clientCounts: { notes: number; timeline: number; chatThreads: number; totalMessages: number; overlaysKeys: number; filesCount: number }
+  } | null> {
+    try {
+      const res = await fetchWithAuth('/storage/verify', {
+        method: 'POST',
+        body: JSON.stringify(data)
+      })
+      if (!res.ok) return null
+      return res.json()
+    } catch {
+      return null
+    }
+  },
+
+  async getSummary(): Promise<{
+    ok: boolean
+    notesCount: number
+    timelineCount: number
+    chatThreadsCount: number
+    totalMessages: number
+    filesCount: number
+    overlaysCount: number
+    storageQuota: { limit: number; usage: number } | null
+  } | null> {
+    try {
+      const res = await fetchWithAuth('/storage/summary')
+      if (!res.ok) return null
+      return res.json()
+    } catch {
+      return null
+    }
+  },
+
   async loadAll(): Promise<{
     notes: any[]
     timeline: any[]
@@ -233,7 +278,7 @@ export const filesApi = {
     }
   },
   
-  async upload(file: File): Promise<{
+  async upload(file: File, options?: { id?: string; addedAt?: number }): Promise<{
     id: string
     name: string
     type: string
@@ -245,6 +290,8 @@ export const filesApi = {
     try {
       const formData = new FormData()
       formData.append('file', file)
+      if (options?.id) formData.append('id', options.id)
+      if (options?.addedAt != null) formData.append('addedAt', String(options.addedAt))
       
       const res = await fetchWithAuth('/files', {
         method: 'POST',
@@ -256,6 +303,58 @@ export const filesApi = {
     } catch {
       return null
     }
+  },
+
+  async uploadWithProgress(
+    file: File,
+    onProgress: (percent: number) => void
+  ): Promise<{
+    id: string
+    name: string
+    type: string
+    size: number
+    addedAt: number
+    driveFileId: string
+    url: string
+  } | null> {
+    return new Promise((resolve) => {
+      const xhr = new XMLHttpRequest()
+      const formData = new FormData()
+      formData.append('file', file)
+
+      onProgress(0)
+
+      xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable) {
+          onProgress(Math.round((e.loaded / e.total) * 100))
+        }
+      })
+
+      xhr.addEventListener('load', () => {
+        onProgress(100)
+        if (xhr.status >= 200 && xhr.status < 300) {
+          try {
+            const data = JSON.parse(xhr.responseText)
+            resolve(data)
+          } catch {
+            resolve(null)
+          }
+        } else {
+          resolve(null)
+        }
+      })
+
+      xhr.addEventListener('error', () => resolve(null))
+
+      const base = import.meta.env.VITE_API_URL || 'http://localhost:3001/api'
+      xhr.open('POST', `${base}/files`)
+      const token = getAuthToken()
+      if (token) {
+        xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+      }
+      xhr.withCredentials = true
+      xhr.send(formData)
+    })
   },
   
   async download(id: string): Promise<Blob | null> {
@@ -305,4 +404,17 @@ export const filesApi = {
 
 export function isAuthenticated(): boolean {
   return !!getAuthToken()
+}
+
+// Drive API (for verification)
+export const driveApi = {
+  async verify(): Promise<{ ok: boolean; hasStorage?: boolean; error?: string }> {
+    try {
+      const res = await fetchWithAuth('/drive/ensure-appdata')
+      const data = await res.json()
+      return data
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : 'Failed to verify' }
+    }
+  }
 }

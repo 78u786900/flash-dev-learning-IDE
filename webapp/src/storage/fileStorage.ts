@@ -53,6 +53,25 @@ export async function saveFileToStorage(
   })
 }
 
+/** Get a single file blob from storage by id. Returns null if not found. */
+export async function getFileBlob(id: string): Promise<Blob | null> {
+  const db = await openDB()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readonly')
+    const store = tx.objectStore(STORE)
+    const req = store.get(id)
+    req.onerror = () => {
+      db.close()
+      reject(req.error)
+    }
+    req.onsuccess = () => {
+      const row = req.result as StoredFileRow | undefined
+      resolve(row?.blob ?? null)
+    }
+    tx.oncomplete = () => db.close()
+  })
+}
+
 /** Load all files from storage and return as DroppedFile[] (with fresh blob URLs). */
 export async function loadFilesFromStorage(): Promise<DroppedFile[]> {
   const db = await openDB()

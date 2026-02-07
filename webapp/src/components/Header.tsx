@@ -1,5 +1,7 @@
 import { LoginButton } from './LoginButton'
 import { StorageUsageIndicator } from './StorageUsageIndicator'
+import { ApiKeyButton } from './ApiKeyButton'
+import type { ApiKeyProvider } from '../storage/apiKeyStore'
 
 interface HeaderProps {
   onToggleLock: () => void
@@ -10,6 +12,8 @@ interface HeaderProps {
   onRedo: () => void
   canUndo: boolean
   canRedo: boolean
+  onVerifyStorage?: () => Promise<import('./LoginButton').VerifyStorageResult | null>
+  onApiKeysChange?: (keys: Record<ApiKeyProvider, string>) => void
 }
 
 export function Header({
@@ -21,6 +25,8 @@ export function Header({
   onRedo,
   canUndo,
   canRedo,
+  onVerifyStorage,
+  onApiKeysChange,
 }: HeaderProps) {
   return (
     <header className="ide-header">
@@ -34,10 +40,11 @@ export function Header({
         <span>Terminal</span>
         <span>Help</span>
       </nav>
-      <span className="ide-header-title">flash.dev</span>
+      <span className="ide-header-title">⚡ flash.dev</span>
       <div className="ide-header-actions">
+        <ApiKeyButton onKeysChange={onApiKeysChange} />
         <StorageUsageIndicator />
-        <LoginButton />
+        <LoginButton onVerifyStorage={onVerifyStorage} />
         <button
           type="button"
           className="ide-header-undo"

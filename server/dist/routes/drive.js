@@ -2,28 +2,27 @@ import { Router } from 'express';
 import { createDriveService } from '../services/googleDrive.js';
 export const driveRouter = Router();
 /**
- * GET /api/drive/ensure-folder
- * Ensures the app folder exists in Google Drive. Use this to debug "folder not showing".
- * Returns folderId if successful, or error details.
+ * GET /api/drive/ensure-appdata
+ * Verifies app data folder (appDataFolder) is accessible. Use for debugging.
  */
-driveRouter.get('/ensure-folder', async (req, res) => {
+driveRouter.get('/ensure-appdata', async (req, res) => {
     try {
         if (!req.accessToken) {
             return res.status(401).json({ ok: false, error: 'Not authenticated' });
         }
         const driveService = createDriveService(req.accessToken);
-        const folderId = await driveService.getOrCreateAppFolder();
+        const data = await driveService.loadStorageData();
         res.json({
             ok: true,
-            folderId,
-            message: 'Folder exists or was created. Check Google Drive (My Drive) for "flash.dev".'
+            message: 'App data folder ready.',
+            hasStorage: !!data
         });
     }
     catch (error) {
-        console.error('Ensure folder error:', error?.message || error);
+        console.error('Ensure appdata error:', error?.message || error);
         res.status(500).json({
             ok: false,
-            error: error?.message || 'Failed to ensure folder',
+            error: error?.message || 'Failed to access app data',
             code: error?.code,
             details: process.env.NODE_ENV === 'development' ? String(error) : undefined
         });

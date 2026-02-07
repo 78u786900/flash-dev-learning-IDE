@@ -9,6 +9,136 @@ const DEFAULT_STORAGE = {
     fileMetadata: []
 };
 /**
+ * GET /api/storage/summary
+ * Lightweight summary for cloud storage display (notes, files, chat counts)
+ */
+storageRouter.get('/summary', async (req, res) => {
+    try {
+        if (!req.accessToken) {
+            return res.status(401).json({ error: 'Not authenticated' });
+        }
+        const driveService = createDriveService(req.accessToken);
+        const [data, files, quota] = await Promise.all([
+            driveService.loadStorageData(),
+            driveService.listFiles(),
+            driveService.getStorageQuota()
+        ]);
+        const notesCount = data?.notes?.length ?? 0;
+        const timelineCount = data?.timeline?.length ?? 0;
+        const chatThreadsCount = data?.chatThreads?.length ?? 0;
+        const totalMessages = (data?.chatThreads ?? []).reduce((sum, t) => sum + (t.messages?.length ?? 0), 0);
+        const filesCount = files?.length ?? 0;
+        const overlaysCount = Object.keys(data?.canvasOverlays ?? {}).length;
+        res.json({
+            ok: true,
+            notesCount,
+            timelineCount,
+            chatThreadsCount,
+            totalMessages,
+            filesCount,
+            overlaysCount,
+            storageQuota: quota ? { limit: quota.limit, usage: quota.usage } : null,
+        });
+    }
+    catch (error) {
+        console.error('Storage summary error:', error);
+        res.status(500).json({ ok: false, error: error?.message });
+    }
+});
+/** Deterministic JSON stringify for comparison (sort keys) */
+function stableStringify(obj) {
+    if (obj === null || obj === undefined)
+        return JSON.stringify(obj);
+    if (Array.isArray(obj))
+        return '[' + obj.map(stableStringify).join(',') + ']';
+    if (typeof obj === 'object') {
+        const keys = Object.keys(obj).sort();
+        return '{' + keys.map(k => JSON.stringify(k) + ':' + stableStringify(obj[k])).join(',') + '}';
+    }
+    return JSON.stringify(obj);
+}
+/**
+ * POST /api/storage/verify
+ * Compare client state with what's stored on Drive. Returns match status and counts.
+ */
+storageRouter.post('/verify', async (req, res) => {
+    try {
+        if (!req.accessToken) {
+            return res.status(401).json({ error: 'Not authenticated' });
+        }
+        const body = req.body;
+        if (!body || typeof body !== 'object') {
+            return res.status(400).json({ error: 'Invalid body: expected { notes, timeline, chatThreads, canvasOverlays, fileMetadata? }' });
+        }
+        const driveService = createDriveService(req.accessToken);
+        const driveData = await driveService.loadStorageData();
+        const clientState = {
+            notes: body.notes ?? [],
+            timeline: body.timeline ?? [],
+            chatThreads: body.chatThreads ?? [],
+            canvasOverlays: body.canvasOverlays ?? {},
+            fileMetadata: (body.fileMetadata ?? []).map(f => ({
+                id: f.id,
+                name: f.name,
+                type: f.type,
+                size: f.size,
+                addedAt: f.addedAt,
+                driveFileId: f.driveFileId
+            }))
+        };
+        const driveState = driveData
+            ? {
+                notes: driveData.notes ?? [],
+                timeline: driveData.timeline ?? [],
+                chatThreads: driveData.chatThreads ?? [],
+                canvasOverlays: driveData.canvasOverlays ?? {},
+                fileMetadata: (driveData.fileMetadata ?? []).map(f => ({
+                    id: f.id,
+                    name: f.name,
+                    type: f.type,
+                    size: f.size,
+                    addedAt: f.addedAt,
+                    driveFileId: f.driveFileId
+                }))
+            }
+            : { notes: [], timeline: [], chatThreads: [], canvasOverlays: {}, fileMetadata: [] };
+        const notesMatch = stableStringify(clientState.notes) === stableStringify(driveState.notes);
+        const timelineMatch = stableStringify(clientState.timeline) === stableStringify(driveState.timeline);
+        const chatMatch = stableStringify(clientState.chatThreads) === stableStringify(driveState.chatThreads);
+        const overlaysMatch = stableStringify(clientState.canvasOverlays) === stableStringify(driveState.canvasOverlays);
+        const filesMatch = stableStringify(clientState.fileMetadata) === stableStringify(driveState.fileMetadata);
+        const match = notesMatch && timelineMatch && chatMatch && overlaysMatch && filesMatch;
+        const driveCounts = {
+            notes: driveState.notes.length,
+            timeline: driveState.timeline.length,
+            chatThreads: driveState.chatThreads.length,
+            totalMessages: driveState.chatThreads.reduce((sum, t) => sum + (t.messages?.length ?? 0), 0),
+            overlaysKeys: Object.keys(driveState.canvasOverlays).length,
+            filesCount: driveState.fileMetadata.length
+        };
+        const clientCounts = {
+            notes: clientState.notes.length,
+            timeline: clientState.timeline.length,
+            chatThreads: clientState.chatThreads.length,
+            totalMessages: clientState.chatThreads.reduce((sum, t) => sum + (t.messages?.length ?? 0), 0),
+            overlaysKeys: Object.keys(clientState.canvasOverlays).length,
+            filesCount: clientState.fileMetadata.length
+        };
+        res.json({
+            ok: true,
+            match,
+            driveReachable: !!driveData,
+            details: { notesMatch, timelineMatch, chatMatch, overlaysMatch, filesMatch },
+            driveCounts,
+            clientCounts
+        });
+    }
+    catch (error) {
+        console.error('Storage verify error:', error);
+        res.status(500).json({ ok: false, error: error?.message });
+    }
+});
+/**
  * GET /api/storage
  * Load all storage data from Google Drive
  */

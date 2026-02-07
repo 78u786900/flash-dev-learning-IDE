@@ -9,19 +9,39 @@ const MAX_IMAGE_DATAURL_LENGTH = 800 * 1024 // ~800KB; skip storing if larger to
 
 export type ChatMode = 'agent' | 'ask'
 
-export type GeminiModel =
-  | 'gemini-2-flash'
-  | 'gemini-2.5-flash'
-  | 'gemini-2.5-pro'
-  | 'gemini-3-flash'
-  | 'gemini-3-pro'
+export type ApiProvider = 'google' | 'openai' | 'anthropic'
 
-const MODELS: { id: GeminiModel; label: string; apiId: string }[] = [
-  { id: 'gemini-2-flash', label: 'Gemini 2 Flash', apiId: 'gemini-2.0-flash' },
-  { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', apiId: 'gemini-2.5-flash' },
-  { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', apiId: 'gemini-2.5-pro' },
-  { id: 'gemini-3-flash', label: 'Gemini 3 Flash', apiId: 'gemini-3-flash-preview' },
-  { id: 'gemini-3-pro', label: 'Gemini 3 Pro', apiId: 'gemini-3-pro-preview' },
+export type ChatModelId =
+  | 'gemini-3-pro' | 'gemini-3-flash' | 'gemini-2.5-pro' | 'gemini-2.5-flash' | 'gemini-2.5-flash-lite'
+  | 'gpt-5.2-pro' | 'gpt-5.2' | 'gpt-5-mini' | 'gpt-4.1' | 'gpt-4.1-mini'
+  | 'claude-opus-4.6' | 'claude-opus-4.5' | 'claude-sonnet-4.5' | 'claude-haiku-4.5' | 'claude-sonnet-3.5'
+
+interface ModelDef {
+  id: ChatModelId
+  label: string
+  apiId: string
+  provider: ApiProvider
+}
+
+const MODELS: ModelDef[] = [
+  // Google (Gemini)
+  { id: 'gemini-3-pro', label: 'Gemini 3 Pro', apiId: 'gemini-3-pro-preview', provider: 'google' },
+  { id: 'gemini-3-flash', label: 'Gemini 3 Flash', apiId: 'gemini-3-flash-preview', provider: 'google' },
+  { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', apiId: 'gemini-2.5-pro', provider: 'google' },
+  { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', apiId: 'gemini-2.5-flash', provider: 'google' },
+  { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite', apiId: 'gemini-2.5-flash-lite', provider: 'google' },
+  // OpenAI
+  { id: 'gpt-5.2-pro', label: 'GPT-5.2 Pro', apiId: 'gpt-5.2-pro', provider: 'openai' },
+  { id: 'gpt-5.2', label: 'GPT-5.2', apiId: 'gpt-5.2', provider: 'openai' },
+  { id: 'gpt-5-mini', label: 'GPT-5 Mini', apiId: 'gpt-5-mini', provider: 'openai' },
+  { id: 'gpt-4.1', label: 'GPT-4.1', apiId: 'gpt-4.1', provider: 'openai' },
+  { id: 'gpt-4.1-mini', label: 'GPT-4.1 Mini', apiId: 'gpt-4.1-mini', provider: 'openai' },
+  // Anthropic (Claude)
+  { id: 'claude-opus-4.6', label: 'Claude Opus 4.6', apiId: 'claude-opus-4-6-20260205', provider: 'anthropic' },
+  { id: 'claude-opus-4.5', label: 'Claude Opus 4.5', apiId: 'claude-opus-4-5-20250520', provider: 'anthropic' },
+  { id: 'claude-sonnet-4.5', label: 'Claude Sonnet 4.5', apiId: 'claude-sonnet-4-5-20241022', provider: 'anthropic' },
+  { id: 'claude-haiku-4.5', label: 'Claude Haiku 4.5', apiId: 'claude-haiku-4-5-20241022', provider: 'anthropic' },
+  { id: 'claude-sonnet-3.5', label: 'Claude Sonnet 3.5', apiId: 'claude-3-5-sonnet-20241022', provider: 'anthropic' },
 ]
 
 const MOCK_AGENT_REPLY = `你好！我係 Learning IDE 嘅 AI Agent，我有以下工具可以用：
@@ -68,6 +88,100 @@ async function callGeminiAsk(
   const data = await res.json()
   const text = data?.candidates?.[0]?.content?.parts?.[0]?.text
   return text ?? '（無回覆）'
+}
+
+async function callOpenAIAsk(
+  apiKey: string,
+  modelApiId: string,
+  messages: { role: 'user' | 'model'; text: string }[],
+  userMessage: string,
+  imageDataUrl?: string | null
+): Promise<string> {
+  const systemMsg = 'You are a helpful assistant for Learning IDE. Reply concisely. Use Cantonese when appropriate.'
+  const openaiMessages: { role: 'system' | 'user' | 'assistant'; content: string | Array<{ type: string; image_url?: { url: string }; text?: string }> }[] = [
+    { role: 'system', content: systemMsg },
+  ]
+  for (const m of messages) {
+    if (m.role === 'user') {
+      openaiMessages.push({ role: 'user', content: m.text })
+    } else {
+      openaiMessages.push({ role: 'assistant', content: m.text })
+    }
+  }
+  const lastContent: Array<{ type: string; image_url?: { url: string }; text?: string }> = []
+  if (userMessage) lastContent.push({ type: 'text', text: userMessage })
+  if (imageDataUrl) lastContent.push({ type: 'image_url', image_url: { url: imageDataUrl } })
+  if (lastContent.length === 0) lastContent.push({ type: 'text', text: '請睇呢張圖。' })
+  openaiMessages.push({ role: 'user', content: lastContent })
+
+  const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: modelApiId,
+      messages: openaiMessages,
+      max_tokens: 4096,
+    }),
+  })
+  if (!res.ok) {
+    const err = await res.text()
+    throw new Error(err || `OpenAI API error ${res.status}`)
+  }
+  const data = await res.json()
+  const text = data?.choices?.[0]?.message?.content
+  return text?.trim() ?? '（無回覆）'
+}
+
+async function callAnthropicAsk(
+  apiKey: string,
+  modelApiId: string,
+  messages: { role: 'user' | 'model'; text: string }[],
+  userMessage: string,
+  imageDataUrl?: string | null
+): Promise<string> {
+  const systemPrompt = 'You are a helpful assistant for Learning IDE. Reply concisely. Use Cantonese when appropriate.'
+  const anthropicMessages: { role: 'user' | 'assistant'; content: Array<{ type: 'text'; text: string } | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }> }[] = []
+  for (const m of messages) {
+    if (m.role === 'user') {
+      anthropicMessages.push({ role: 'user', content: [{ type: 'text', text: m.text }] })
+    } else {
+      anthropicMessages.push({ role: 'assistant', content: [{ type: 'text', text: m.text }] })
+    }
+  }
+  const lastContent: Array<{ type: 'text'; text: string } | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }> = []
+  if (userMessage) lastContent.push({ type: 'text', text: userMessage })
+  if (imageDataUrl) {
+    const base64 = dataUrlToBase64(imageDataUrl)
+    const mime = imageDataUrl.startsWith('data:image/png') ? 'image/png' : 'image/jpeg'
+    lastContent.push({ type: 'image', source: { type: 'base64', media_type: mime, data: base64 } })
+  }
+  if (lastContent.length === 0) lastContent.push({ type: 'text', text: '請睇呢張圖。' })
+  anthropicMessages.push({ role: 'user', content: lastContent })
+
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: modelApiId,
+      max_tokens: 4096,
+      system: systemPrompt,
+      messages: anthropicMessages,
+    }),
+  })
+  if (!res.ok) {
+    const err = await res.text()
+    throw new Error(err || `Anthropic API error ${res.status}`)
+  }
+  const data = await res.json()
+  const text = data?.content?.[0]?.text
+  return text?.trim() ?? '（無回覆）'
 }
 
 export interface AgentRunInfo {
@@ -125,6 +239,10 @@ function parseLogToStep(line: string, id: string): AgentStep {
 
 interface ChatPanelProps {
   agentContext?: AgentContext
+  /** API keys per provider (from user-stored + env fallback for Google). */
+  storedApiKeys?: Record<ApiProvider, string>
+  /** Fallback Gemini key from env (used when storedApiKeys.google is empty). */
+  geminiApiKeyEnv?: string
   messages?: StoredChatMessage[]
   onMessagesChange?: (updater: (prev: StoredChatMessage[]) => StoredChatMessage[]) => void
   onToolAction?: (action: ToolResultAction) => void
@@ -141,6 +259,8 @@ interface ChatPanelProps {
 
 export function ChatPanel({
   agentContext = {},
+  storedApiKeys = { google: '', openai: '', anthropic: '' },
+  geminiApiKeyEnv,
   messages: controlledMessages,
   onMessagesChange,
   onToolAction,
@@ -155,7 +275,7 @@ export function ChatPanel({
   onClearRenderErrors,
 }: ChatPanelProps) {
   const [mode, setMode] = useState<ChatMode>('agent')
-  const [model, setModel] = useState<GeminiModel>('gemini-3-flash')
+  const [model, setModel] = useState<ChatModelId>('gemini-3-flash')
   const [input, setInput] = useState('')
   const [localMessages, setLocalMessages] = useState<StoredChatMessage[]>([{ role: 'agent', text: MOCK_AGENT_REPLY }])
   const messages = controlledMessages ?? localMessages
@@ -181,6 +301,7 @@ export function ChatPanel({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const chatbarRef = useRef<HTMLDivElement>(null)
+  const tabsScrollRef = useRef<HTMLDivElement>(null)
   const stepIdCounter = useRef(0)
 
   useEffect(() => {
@@ -222,8 +343,17 @@ export function ChatPanel({
     }
   }
 
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined
-  const hasApiKey = Boolean(apiKey?.trim())
+  const modelConfig = MODELS.find(m => m.id === model)
+  const apiKeyForModel = (() => {
+    if (!modelConfig) return ''
+    if (modelConfig.provider === 'google') {
+      return storedApiKeys.google?.trim() || geminiApiKeyEnv?.trim() || (import.meta.env.VITE_GEMINI_API_KEY as string | undefined) || ''
+    }
+    if (modelConfig.provider === 'openai') return storedApiKeys.openai?.trim() || ''
+    if (modelConfig.provider === 'anthropic') return storedApiKeys.anthropic?.trim() || ''
+    return ''
+  })()
+  const hasApiKey = Boolean(apiKeyForModel)
 
   // Auto-scroll when messages change
   useEffect(() => {
@@ -246,6 +376,17 @@ export function ChatPanel({
   useEffect(() => {
     if (!chatTabs || !chatTabs.length) return
   }, [chatTabs?.length])
+
+  // Auto-scroll chat tabs to the right when tabs or active chat changes
+  useEffect(() => {
+    const el = tabsScrollRef.current
+    if (!el) return
+    const scrollToRight = () => {
+      el.scrollLeft = el.scrollWidth - el.clientWidth
+    }
+    scrollToRight()
+    requestAnimationFrame(scrollToRight)
+  }, [chatTabs?.length, activeChatId])
 
   /** Generate unique step ID */
   const genStepId = useCallback(() => {
@@ -300,11 +441,11 @@ export function ChatPanel({
     
     try {
       if (!hasApiKey) {
-        setMessages(prev => [...prev, { role: 'agent', text: '請喺 .env 設定 VITE_GEMINI_API_KEY 後先可以用 AI。' }])
+        const providerName = modelConfig?.provider === 'openai' ? 'OpenAI' : modelConfig?.provider === 'anthropic' ? 'Anthropic' : 'Google'
+        setMessages(prev => [...prev, { role: 'agent', text: `請先設定 ${providerName} API Key（點擊頂部 🔑 按鈕）。` }])
         setLoading(false)
         return
       }
-      const modelConfig = MODELS.find(m => m.id === model)
       const apiId = modelConfig?.apiId ?? 'gemini-2.0-flash'
       const history = messages.map(m => ({
         role: m.role === 'user' ? 'user' as const : 'model' as const,
@@ -312,6 +453,11 @@ export function ChatPanel({
       }))
       
       if (mode === 'agent') {
+        if (modelConfig?.provider !== 'google') {
+          setMessages(prev => [...prev, { role: 'agent', text: 'Agent 模式（工具）暫時只支援 Google Gemini。請切換到 Ask 模式，或揀選 Gemini 模型。' }])
+          setLoading(false)
+          return
+        }
         const startTime = Date.now()
         setRunStartTime(startTime)
         setStreamingText(null)
@@ -328,7 +474,7 @@ export function ChatPanel({
             : undefined
             
         const result = await runAgentChatWithTools({
-          apiKey: apiKey!,
+          apiKey: apiKeyForModel,
           modelApiId: apiId,
           messages: history,
           userMessage: text || '請睇呢張圖並回覆。',
@@ -379,7 +525,14 @@ export function ChatPanel({
           },
         }])
       } else {
-        const reply = await callGeminiAsk(apiKey!, apiId, history, text || '請睇呢張圖。', imageToSendThisTurn)
+        let reply: string
+        if (modelConfig?.provider === 'openai') {
+          reply = await callOpenAIAsk(apiKeyForModel, apiId, history, text || '請睇呢張圖。', imageToSendThisTurn)
+        } else if (modelConfig?.provider === 'anthropic') {
+          reply = await callAnthropicAsk(apiKeyForModel, apiId, history, text || '請睇呢張圖。', imageToSendThisTurn)
+        } else {
+          reply = await callGeminiAsk(apiKeyForModel, apiId, history, text || '請睇呢張圖。', imageToSendThisTurn)
+        }
         chatLogToTerminal('agent', { text: reply })
         setMessages(prev => [...prev, { role: 'agent', text: reply }])
       }
@@ -391,7 +544,7 @@ export function ChatPanel({
       const errMsg = e instanceof Error ? e.message : String(e)
       const isFetchFailed = /failed to fetch|network|networkerror/i.test(errMsg)
       const hint = isFetchFailed
-        ? '\n\n可能原因：網絡唔通、API key 無設好、或者被防火牆/擴展擋咗。請檢查 .env 嘅 VITE_GEMINI_API_KEY，同確保可以連到 Google API。'
+        ? '\n\n可能原因：網絡唔通、API key 無設好、或者被防火牆/擴展擋咗。請用頂部 🔑 按鈕設定 API Key，或檢查 .env 嘅 VITE_GEMINI_API_KEY。'
         : ''
       setError(errMsg)
       setMessages(prev => [...prev, { role: 'agent', text: `出錯：${errMsg}${hint}` }])
@@ -579,7 +732,7 @@ export function ChatPanel({
     <div className="ide-chat">
       {chatTabs && chatTabs.length > 0 && (
         <div className="ide-chat-tabs">
-          <div className="ide-chat-tabs-scroll">
+          <div ref={tabsScrollRef} className="ide-chat-tabs-scroll">
             {chatTabs.map((tab) => (
               <div
                 key={tab.id}
@@ -748,20 +901,25 @@ export function ChatPanel({
               </span>
             </button>
             {dropdownOpen === 'model' && (
-              <ul className="ide-chatbar-dropdown-list ide-chatbar-dropdown-list--up" role="listbox">
-                {MODELS.map((m) => (
-                  <li key={m.id} role="option">
-                    <button
-                      type="button"
-                      className={`ide-chatbar-dropdown-option ${model === m.id ? 'ide-chatbar-dropdown-option--selected' : ''}`}
-                      onClick={() => { setModel(m.id); setDropdownOpen(null) }}
-                    >
-                      <span className="ide-chatbar-dropdown-label">{m.label}</span>
-                      {model === m.id && <span className="ide-chatbar-dropdown-check">✓</span>}
-                    </button>
-                  </li>
+              <div className="ide-chatbar-dropdown-list ide-chatbar-dropdown-list--up ide-chatbar-dropdown-list--models" role="listbox">
+                {(['google', 'openai', 'anthropic'] as const).map((provider) => (
+                  <div key={provider} className="ide-chatbar-dropdown-provider-group">
+                    <div className="ide-chatbar-dropdown-group">{provider === 'google' ? 'Google' : provider === 'openai' ? 'OpenAI' : 'Anthropic'}</div>
+                    {MODELS.filter(m => m.provider === provider).map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        role="option"
+                        className={`ide-chatbar-dropdown-option ${model === m.id ? 'ide-chatbar-dropdown-option--selected' : ''}`}
+                        onClick={() => { setModel(m.id); setDropdownOpen(null) }}
+                      >
+                        <span className="ide-chatbar-dropdown-label">{m.label}</span>
+                        {model === m.id && <span className="ide-chatbar-dropdown-check">✓</span>}
+                      </button>
+                    ))}
+                  </div>
                 ))}
-              </ul>
+              </div>
             )}
           </div>
           <input

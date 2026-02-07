@@ -371,18 +371,18 @@ firebase deploy --only hosting
    - Add **Google Drive API** → `https://www.googleapis.com/auth/drive.file` (view and manage Drive files created by this app)
    - Save. Then **re-login** to the app so the new scope is granted.
 
-2. **Call the ensure-folder debug endpoint (after logging in)**
+2. **Call the ensure-appdata debug endpoint (after logging in)**
    - In your app, open DevTools (F12) → **Console**
    - Run (replace `YOUR_RAILWAY_URL` and paste your token from Application → Local Storage → `flash_dev_token`):
    ```js
-   fetch('https://YOUR_RAILWAY_URL/api/drive/ensure-folder', { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('flash_dev_token') } }).then(r=>r.json()).then(console.log)
+   fetch('https://YOUR_RAILWAY_URL/api/drive/ensure-appdata', { headers: { 'Authorization': 'Bearer ' + localStorage.getItem('flash_dev_token') } }).then(r=>r.json()).then(console.log)
    ```
    - If you see `{ ok: true, folderId: "..." }`, the folder was created; check **My Drive** (and search "flash.dev").
    - If you see `{ ok: false, error: "..." }`, check the `error` message (e.g. 403 = permission/scope issue).
 
 3. **Check Railway logs**
    - In Railway dashboard, open your service → **Deployments** → **View Logs**
-   - After loading the app or calling ensure-folder, look for `[Drive] Created folder "flash.dev"` or an error line.
+   - After loading the app or calling ensure-appdata, check the response for `ok: true` or an error message.
 
 4. **Confirm account**
    - Open [drive.google.com](https://drive.google.com) and ensure you're signed in with the **same Google account** you used to log in to flash.dev.

@@ -1,9 +1,17 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import type { Note, DroppedFile, TimelineAction } from '../types'
 
+interface UploadingFile {
+  id: string
+  name: string
+  size: number
+  progress: number
+}
+
 interface SidebarProps {
   notes: Note[]
   files: DroppedFile[]
+  uploadingFiles?: UploadingFile[]
   activeNoteId: string | null
   activeFileId: string | null
   timeline: TimelineAction[]
@@ -92,6 +100,7 @@ function groupFiles(files: DroppedFile[]): FileGroup[] {
 export function Sidebar({
   notes,
   files,
+  uploadingFiles = [],
   activeNoteId,
   activeFileId,
   timeline,
@@ -225,6 +234,28 @@ export function Sidebar({
               </div>
             ))}
         </div>
+        {uploadingFiles.length > 0 && (
+          <div className="ide-sidebar-file-group">
+            <div className="ide-sidebar-file-group-header">
+              <span className="ide-sidebar-file-group-chevron">▼</span>
+              <span className="ide-sidebar-file-group-title">上傳中</span>
+              <span className="ide-sidebar-file-group-count">{uploadingFiles.length}</span>
+            </div>
+            {uploadingFiles.map((uf) => (
+              <div key={uf.id} className="ide-sidebar-item ide-sidebar-item-file ide-sidebar-item-uploading">
+                <span className="icon ide-sidebar-upload-icon">
+                  {uf.progress < 100 ? (
+                    <span className="ide-sidebar-upload-spinner" aria-hidden="true" />
+                  ) : (
+                    '✓'
+                  )}
+                </span>
+                <span className="ide-sidebar-item-name" title={uf.name}>{uf.name}</span>
+                <span className="ide-sidebar-upload-progress">{uf.progress}%</span>
+              </div>
+            ))}
+          </div>
+        )}
         {fileGroups.map(group => {
           const isOpen = openFileGroups[group.id] ?? true
           return (

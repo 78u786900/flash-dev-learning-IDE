@@ -3,7 +3,7 @@ import { google } from 'googleapis'
 const SCOPES = [
   'https://www.googleapis.com/auth/userinfo.email',
   'https://www.googleapis.com/auth/userinfo.profile',
-  'https://www.googleapis.com/auth/drive.file' // Access to files created/opened by the app
+  'https://www.googleapis.com/auth/drive.appdata' // App-specific storage (non-sensitive, no verification needed)
 ]
 
 export function createOAuth2Client() {

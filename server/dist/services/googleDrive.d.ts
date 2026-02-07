@@ -1,14 +1,9 @@
 import type { StorageData } from '../types.js';
 export declare class GoogleDriveService {
     private drive;
-    private folderId;
     constructor(accessToken: string);
     /**
-     * Get or create the app folder in Google Drive
-     */
-    getOrCreateAppFolder(): Promise<string>;
-    /**
-     * Find a file by name in the app folder
+     * Find a file by name in the app data folder
      */
     findFileByName(fileName: string): Promise<string | null>;
     /**
@@ -16,11 +11,11 @@ export declare class GoogleDriveService {
      */
     loadStorageData(): Promise<StorageData | null>;
     /**
-     * Save storage data to Google Drive
+     * Save storage data to Google Drive (appDataFolder)
      */
     saveStorageData(data: StorageData): Promise<void>;
     /**
-     * Upload a file (PDF, image, etc.) to Google Drive
+     * Upload a file (PDF, image, etc.) to Google Drive (appDataFolder)
      */
     uploadFile(fileName: string, mimeType: string, content: Buffer, fileId?: string): Promise<{
         id: string;
@@ -43,7 +38,7 @@ export declare class GoogleDriveService {
      */
     renameFile(fileId: string, newName: string): Promise<void>;
     /**
-     * List all files in the app folder
+     * List all files in the app data folder (excludes storage.json)
      */
     listFiles(): Promise<Array<{
         id: string;
@@ -52,9 +47,18 @@ export declare class GoogleDriveService {
         size: string;
     }>>;
     /**
-     * Get shareable link for a file
+     * Get URL for a file. appDataFolder files cannot be shared publicly,
+     * so we return empty string - frontend must use download API to get blob URL.
      */
-    getFileUrl(fileId: string): Promise<string>;
+    getFileUrl(_fileId: string): Promise<string>;
+    /**
+     * Get user's Drive storage quota (limit and usage in bytes).
+     * Returns null if about.get is not allowed (e.g. scope restriction).
+     */
+    getStorageQuota(): Promise<{
+        limit: number;
+        usage: number;
+    } | null>;
 }
 export declare function createDriveService(accessToken: string): GoogleDriveService;
 //# sourceMappingURL=googleDrive.d.ts.map

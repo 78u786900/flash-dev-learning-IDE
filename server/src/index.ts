@@ -1,4 +1,16 @@
 import 'dotenv/config'
+import path from 'path'
+import fs from 'fs'
+import { config } from 'dotenv'
+
+// In development, load .env.local to override .env (easy switch between local and production)
+if (process.env.NODE_ENV !== 'production') {
+  const localPath = path.join(process.cwd(), '.env.local')
+  if (fs.existsSync(localPath)) {
+    config({ path: localPath, override: true })
+  }
+}
+
 import express from 'express'
 import cors from 'cors'
 import cookieParser from 'cookie-parser'
@@ -53,7 +65,11 @@ app.use('/api/files', authMiddleware, filesRouter)
 app.use('/api/drive', authMiddleware, driveRouter)
 
 // Error handling middleware
-app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
+app.use((err: Error & { code?: string }, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (err.name === 'MulterError' && err.code === 'LIMIT_FILE_SIZE') {
+    res.status(413).json({ error: 'File too large', message: 'Maximum file size is 500MB' })
+    return
+  }
   console.error('Server error:', err)
   res.status(500).json({ 
     error: 'Internal server error',

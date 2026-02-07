@@ -137,25 +137,27 @@ export function FileViewer({
     }
   }, [pdf, file.id, file.url, onPdfTextLoaded, onPdfChaptersLoaded])
 
+  const isLoading = !file.url || file.url === ''
+
   return (
     <div className="ide-file-viewer">
-      <div className="ide-file-viewer-header">
-        <span className="ide-file-viewer-title">{file.name}</span>
-        <span className="ide-file-viewer-meta">
-          {file.type} · {(file.size / 1024).toFixed(1)} KB
-        </span>
-      </div>
       <div className="ide-file-viewer-content">
-        {img && (
+        {isLoading && (
+          <div className="ide-file-viewer-loading">
+            <div className="ide-file-viewer-loading-spinner" />
+            <span>載入中…</span>
+          </div>
+        )}
+        {!isLoading && img && (
           <img src={file.url} alt={file.name} className="ide-file-viewer-img" />
         )}
-        {vid && (
+        {!isLoading && vid && (
           <video src={file.url} controls className="ide-file-viewer-video" />
         )}
-        {pdf && (
+        {!isLoading && pdf && (
           <iframe src={file.url} title={file.name} className="ide-file-viewer-iframe" />
         )}
-        {!img && !vid && !pdf && (
+        {!isLoading && !img && !vid && !pdf && (
           <div className="ide-file-viewer-fallback">
             <p>預覽唔支援呢種檔案類型</p>
             <a href={file.url} download={file.name} className="ide-file-viewer-download">

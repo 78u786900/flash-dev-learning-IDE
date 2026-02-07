@@ -9,7 +9,9 @@
     "build": "node ./node_modules/typescript/bin/tsc",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "test:api": "node scripts/test-api.mjs"
+    "test:api": "node scripts/test-api.mjs",
+    "env:local": "node scripts/use-env.js local",
+    "env:prod": "node scripts/use-env.js production"
   },
   "dependencies": {
     "cookie-parser": "^1.4.6",

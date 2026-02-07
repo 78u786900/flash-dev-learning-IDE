@@ -1,4 +1,14 @@
 import 'dotenv/config';
+import path from 'path';
+import fs from 'fs';
+import { config } from 'dotenv';
+// In development, load .env.local to override .env (easy switch between local and production)
+if (process.env.NODE_ENV !== 'production') {
+    const localPath = path.join(process.cwd(), '.env.local');
+    if (fs.existsSync(localPath)) {
+        config({ path: localPath, override: true });
+    }
+}
 import express from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';

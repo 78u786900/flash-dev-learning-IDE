@@ -5,11 +5,11 @@ import type { AuthenticatedRequest, DroppedFileMetadata } from '../types.js'
 
 export const filesRouter = Router()
 
-// Configure multer for memory storage
+// Configure multer for memory storage (500MB for video files; Google Drive supports up to 5TB)
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 100 * 1024 * 1024 // 100MB limit
+    fileSize: 500 * 1024 * 1024 // 500MB limit
   }
 })
 
@@ -75,14 +75,17 @@ filesRouter.post('/', upload.single('file'), async (req: AuthenticatedRequest, r
       req.file.buffer
     )
     
-    // Create metadata
-    const fileId = `f${Date.now()}_${Math.random().toString(36).slice(2)}`
+    // Preserve client id when syncing local→cloud (form field "id"), else generate new
+    const clientId = req.body?.id
+    const fileId = typeof clientId === 'string' && clientId ? clientId : `f${Date.now()}_${Math.random().toString(36).slice(2)}`
+    const clientAddedAt = req.body?.addedAt
+    const addedAt = typeof clientAddedAt === 'string' && /^\d+$/.test(clientAddedAt) ? parseInt(clientAddedAt, 10) : Date.now()
     const metadata: DroppedFileMetadata = {
       id: fileId,
       name: req.file.originalname,
       type: req.file.mimetype,
       size: req.file.size,
-      addedAt: Date.now(),
+      addedAt,
       driveFileId: uploaded.id
     }
     
@@ -230,7 +233,7 @@ filesRouter.put('/:id', async (req: AuthenticatedRequest, res: Response) => {
 
 /**
  * DELETE /api/files/:id
- * Delete a file
+ * Delete a file (id can be app file id or Drive file id)
  */
 filesRouter.delete('/:id', async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -241,23 +244,28 @@ filesRouter.delete('/:id', async (req: AuthenticatedRequest, res: Response) => {
     const { id } = req.params
     const driveService = createDriveService(req.accessToken)
     
-    // Get storage data to find driveFileId
     const storageData = await driveService.loadStorageData()
-    if (!storageData) {
-      return res.status(404).json({ error: 'Storage not found' })
+    const meta = storageData?.fileMetadata?.find(m => m.id === id || m.driveFileId === id)
+    let driveFileId: string | null = meta?.driveFileId ?? null
+
+    // Orphaned file: in Drive but not in fileMetadata (e.g. upload succeeded but metadata save failed)
+    if (!driveFileId) {
+      const driveFiles = await driveService.listFiles()
+      const df = driveFiles.find(f => f.id === id)
+      if (df) driveFileId = df.id
     }
-    
-    const meta = storageData.fileMetadata.find(m => m.id === id || m.driveFileId === id)
-    if (!meta?.driveFileId) {
+
+    if (!driveFileId) {
       return res.status(404).json({ error: 'File not found' })
     }
     
-    // Delete from Drive
-    await driveService.deleteFile(meta.driveFileId)
+    await driveService.deleteFile(driveFileId)
     
-    // Remove from metadata
-    storageData.fileMetadata = storageData.fileMetadata.filter(m => m.id !== id && m.driveFileId !== id)
-    await driveService.saveStorageData(storageData)
+    // Remove from metadata if present
+    if (storageData && meta) {
+      storageData.fileMetadata = storageData.fileMetadata.filter(m => m.id !== id && m.driveFileId !== id)
+      await driveService.saveStorageData(storageData)
+    }
     
     res.json({ success: true })
   } catch (error: any) {

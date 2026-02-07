@@ -196,7 +196,7 @@ filesRouter.put('/:id', async (req, res) => {
 });
 /**
  * DELETE /api/files/:id
- * Delete a file
+ * Delete a file (id can be app file id or Drive file id)
  */
 filesRouter.delete('/:id', async (req, res) => {
     try {
@@ -205,20 +205,25 @@ filesRouter.delete('/:id', async (req, res) => {
         }
         const { id } = req.params;
         const driveService = createDriveService(req.accessToken);
-        // Get storage data to find driveFileId
         const storageData = await driveService.loadStorageData();
-        if (!storageData) {
-            return res.status(404).json({ error: 'Storage not found' });
+        const meta = storageData?.fileMetadata?.find(m => m.id === id || m.driveFileId === id);
+        let driveFileId = meta?.driveFileId ?? null;
+        // Orphaned file: in Drive but not in fileMetadata (e.g. upload succeeded but metadata save failed)
+        if (!driveFileId) {
+            const driveFiles = await driveService.listFiles();
+            const df = driveFiles.find(f => f.id === id);
+            if (df)
+                driveFileId = df.id;
         }
-        const meta = storageData.fileMetadata.find(m => m.id === id || m.driveFileId === id);
-        if (!meta?.driveFileId) {
+        if (!driveFileId) {
             return res.status(404).json({ error: 'File not found' });
         }
-        // Delete from Drive
-        await driveService.deleteFile(meta.driveFileId);
-        // Remove from metadata
-        storageData.fileMetadata = storageData.fileMetadata.filter(m => m.id !== id && m.driveFileId !== id);
-        await driveService.saveStorageData(storageData);
+        await driveService.deleteFile(driveFileId);
+        // Remove from metadata if present
+        if (storageData && meta) {
+            storageData.fileMetadata = storageData.fileMetadata.filter(m => m.id !== id && m.driveFileId !== id);
+            await driveService.saveStorageData(storageData);
+        }
         res.json({ success: true });
     }
     catch (error) {

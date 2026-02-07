@@ -24,18 +24,22 @@ import {
 } from './storage/persistence'
 import {
   loadAllFromCloud,
+  saveAllToCloud,
   saveNotes,
   saveTimeline,
   saveChatThreads,
   saveCanvasOverlays,
   loadFiles,
-  uploadFile as uploadFileToCloud,
+  syncLocalWithCloud,
+  uploadFileWithProgress as uploadFileWithProgressToCloud,
   renameFile as renameFileInCloud,
   deleteFile as deleteFileFromCloud,
+  fetchFileAndCache,
   type CloudFile,
 } from './storage/cloudStorage'
 import { useAuth } from './contexts/AuthContext'
-import { filesApi } from './api/client'
+import { filesApi, storageApi } from './api/client'
+import type { ApiKeyProvider } from './storage/apiKeyStore'
 
 const defaultNote: Note = {
   id: '1',
@@ -97,15 +101,20 @@ function App() {
   const { isAuthenticated } = useAuth()
   const [notes, setNotes] = useState<Note[]>(() => loadNotesSync() ?? [defaultNote])
   const [files, setFiles] = useState<DroppedFile[]>([])
+  const [uploadingFiles, setUploadingFiles] = useState<Array<{ id: string; name: string; size: number; progress: number }>>([])
   const [activeNoteId, setActiveNoteId] = useState<string | null>(() => {
     const loaded = loadNotesSync()
-    if (loaded?.length) return loaded[0].id
+    if (loaded?.length) {
+      const latest = loaded.reduce((a, b) => (a.createdAt >= b.createdAt ? a : b))
+      return latest.id
+    }
     return defaultNote.id
   })
   const [activeFileId, setActiveFileId] = useState<string | null>(null)
   const [timeline, setTimeline] = useState<TimelineAction[]>(() => loadTimelineSync())
   const [chatThreads, setChatThreads] = useState<StoredChatThread[]>(() => getInitialChatState().threads)
   const [activeChatId, setActiveChatId] = useState<string>(() => getInitialChatState().activeId)
+  const [userMessage, setUserMessage] = useState<string | null>(null)
   const [confirmDialog, setConfirmDialog] = useState<{
     open: boolean
     type: 'deleteFile' | 'deleteChat' | 'deleteNote' | 'deleteSection' | 'deleteRecording' | 'deleteCodeWindow' | null
@@ -123,6 +132,7 @@ function App() {
   const [timerPhase, setTimerPhase] = useState<TimerPhase>('idle')
   const [timerSeconds, setTimerSeconds] = useState(25 * 60)
   const [attachedAreaImage, setAttachedAreaImage] = useState<string | null>(null)
+  const [storedApiKeys, setStoredApiKeys] = useState<Record<ApiKeyProvider, string>>({ google: '', openai: '', anthropic: '' })
   const [pdfPageTexts, setPdfPageTexts] = useState<Record<number, string>>({})
   const [pdfFileIdForTexts, setPdfFileIdForTexts] = useState<string | null>(null)
   const [pdfChapters, setPdfChapters] = useState<Array<{ title: string; page: number }>>([])
@@ -236,12 +246,13 @@ function App() {
     if (totalPages != null) setTotalPdfPagesFromDoc(totalPages)
   }, [])
 
-  const activeNote = notes.find(n => n.id === (activeNoteId ?? '')) ?? notes[0]
+  const latestNote = notes.length ? notes.reduce((a, b) => (a.createdAt >= b.createdAt ? a : b)) : notes[0]
+  const activeNote = notes.find(n => n.id === (activeNoteId ?? '')) ?? latestNote
   const activeFile = files.find(f => f.id === activeFileId) ?? null
   activeFileIdRef.current = activeFileId
 
   /** Guard: avoid blank screen if notes empty or activeNote missing (effect will fix state) */
-  const safeNote = activeNote ?? notes[0]
+  const safeNote = activeNote ?? latestNote
   if (!safeNote) {
     return (
       <div className="ide-layout">
@@ -292,10 +303,16 @@ function App() {
   }, [updateNote, logAction, pushHistory])
 
   const addNote = useCallback((name: string) => {
+    const finalName = name?.trim() || '未命名筆記'
+    if (notes.some((n) => n.name === finalName)) {
+      setUserMessage(`無法建立同名筆記：${finalName}`)
+      setTimeout(() => setUserMessage(null), 3000)
+      return
+    }
     pushHistory()
     const newNote: Note = {
       id: `n${Date.now()}`,
-      name: name || '未命名筆記',
+      name: finalName,
       createdAt: Date.now(),
       sections: [{ id: `s${Date.now()}`, title: '第一章', content: '', done: false }],
     }
@@ -303,7 +320,7 @@ function App() {
     setActiveNoteId(newNote.id)
     setActiveFileId(null)
     logAction('created_note', `建立筆記「${newNote.name}」`)
-  }, [logAction, pushHistory])
+  }, [logAction, pushHistory, notes])
 
   const reorderSections = useCallback((noteId: string, sectionIds: string[]) => {
     pushHistory()
@@ -320,10 +337,16 @@ function App() {
   }, [logAction, pushHistory])
 
   const renameNote = useCallback((noteId: string, name: string) => {
+    const finalName = name?.trim() || '未命名筆記'
+    if (notes.some((n) => n.id !== noteId && n.name === finalName)) {
+      setUserMessage(`無法改名為已存在嘅筆記名：${finalName}`)
+      setTimeout(() => setUserMessage(null), 3000)
+      return
+    }
     pushHistory()
-    setNotes(prev => prev.map(n => (n.id === noteId ? { ...n, name: name || '未命名筆記' } : n)))
-    logAction('section_edited', `筆記改名為「${name || '未命名筆記'}」`)
-  }, [logAction, pushHistory])
+    setNotes(prev => prev.map(n => (n.id === noteId ? { ...n, name: finalName } : n)))
+    logAction('section_edited', `筆記改名為「${finalName}」`)
+  }, [logAction, pushHistory, notes])
 
   const deleteNote = useCallback((noteId: string) => {
     pushHistory()
@@ -335,7 +358,8 @@ function App() {
         return [fallback]
       }
       if (activeNoteId === noteId) {
-        setActiveNoteId(next[0].id)
+        const latest = next.reduce((a, b) => (a.createdAt >= b.createdAt ? a : b))
+        setActiveNoteId(latest.id)
       }
       return next
     })
@@ -357,10 +381,16 @@ function App() {
 
   /** Create a new note, switch to it, and return the full Note. Used by agent create_note tool so sections can be added in the same run (context.lastCreatedNote). */
   const createNoteAndReturnId = useCallback((name: string): Note => {
+    const finalName = name?.trim() || '未命名筆記'
+    if (notes.some((n) => n.name === finalName)) {
+      const existing = notes.find((n) => n.name === finalName)!
+      setActiveNoteId(existing.id)
+      return existing
+    }
     pushHistory()
     const newNote: Note = {
       id: `n${Date.now()}`,
-      name: name || '未命名筆記',
+      name: finalName,
       createdAt: Date.now(),
       sections: [{ id: `s${Date.now()}`, title: '第一章', content: '', done: false }],
     }
@@ -369,20 +399,19 @@ function App() {
     setActiveFileId(null)
     logAction('created_note', `建立筆記「${newNote.name}」`)
     return newNote
-  }, [logAction, pushHistory])
+  }, [logAction, pushHistory, notes])
 
   /** When authenticated, load notes/timeline/chat/overlays from Google Drive (cloud).
    * IMPORTANT: Local storage is the source of truth. Cloud data is only used to
    * hydrate when local is effectively empty (first-time login / new browser).
-   * This avoids overwriting newer local changes with stale cloud snapshots when
-   * cloud saves fail.
+   * When cloud is empty but local has data, push local to cloud (first-time sync).
    */
   useEffect(() => {
     if (!isAuthenticated) return
     let cancelled = false
     loadAllFromCloud()
-      .then((data) => {
-        if (cancelled || !data) return
+      .then(async (data) => {
+        if (cancelled) return
         const hasLocalNotes =
           notes.length > 0 &&
           !(notes.length === 1 && notes[0].id === defaultNote.id)
@@ -390,10 +419,47 @@ function App() {
         const hasLocalChats = chatThreads.length > 0
         const hasLocalOverlays = Object.keys(canvasOverlaysByKey).length > 0
 
-        // Only hydrate from cloud when local is effectively empty
+        const cloudEmpty = !data || (
+          data.notes.length === 0 &&
+          data.timeline.length === 0 &&
+          data.chatThreads.length === 0 &&
+          Object.keys(data.canvasOverlays).length === 0
+        )
+        const hasLocalData = hasLocalNotes || hasLocalTimeline || hasLocalChats || hasLocalOverlays
+
+        // First-time sync: push local to cloud when cloud is empty
+        if (cloudEmpty && hasLocalData) {
+          const typed: Record<string, CanvasOverlayMemo[]> = {}
+          for (const [key, arr] of Object.entries(canvasOverlaysByKey)) {
+            if (Array.isArray(arr)) {
+              typed[key] = arr.map((m: any) => ({
+                id: String(m.id ?? `memo-${Date.now()}`),
+                x: typeof m.x === 'number' ? m.x : 0,
+                y: typeof m.y === 'number' ? m.y : 0,
+                width: typeof m.width === 'number' ? m.width : 220,
+                height: typeof m.height === 'number' ? m.height : 140,
+                content: typeof m.content === 'string' ? m.content : ''
+              }))
+            }
+          }
+          await saveAllToCloud({
+            notes,
+            timeline,
+            chatThreads,
+            canvasOverlays: typed
+          })
+          return
+        }
+
+        // Hydrate from cloud when local is effectively empty
+        if (!data) return
         if (data.notes.length > 0 && !hasLocalNotes) {
           setNotes(data.notes)
-          setActiveNoteId((prev) => (data.notes.some((n) => n.id === prev) ? prev : data.notes[0].id))
+          setActiveNoteId((prev) => {
+            if (data.notes.some((n) => n.id === prev)) return prev
+            const latest = data.notes.reduce((a, b) => (a.createdAt >= b.createdAt ? a : b))
+            return latest.id
+          })
         }
         if (data.timeline.length > 0 && !hasLocalTimeline) setTimeline(data.timeline)
         if (data.chatThreads.length > 0 && !hasLocalChats) {
@@ -411,40 +477,56 @@ function App() {
     return () => { cancelled = true }
   }, [isAuthenticated])
 
-  /** Load files: from cloud when authenticated, else from IndexedDB */
+  /** Load files: ONLY from local storage, never from cloud */
   useEffect(() => {
     let cancelled = false
     loadFiles()
-      .then((loaded) => {
-        if (!cancelled) setFiles(loaded)
+      .then(async (loaded) => {
+        if (cancelled) return
+        const synced = await syncLocalWithCloud(loaded)
+        if (!cancelled) setFiles(synced)
       })
       .catch((err) => console.error('Load files failed', err))
     return () => { cancelled = true }
   }, [isAuthenticated])
 
   const addFiles = useCallback(async (fileList: File[]) => {
-    const added: DroppedFile[] = []
+    const seenNames = new Set(files.map((f) => f.name))
     for (const file of fileList) {
+      if (seenNames.has(file.name)) {
+        setUserMessage(`無法重複上傳同名檔案：${file.name}`)
+        setTimeout(() => setUserMessage(null), 3000)
+        continue
+      }
+      const tempId = `upload-${Date.now()}-${Math.random().toString(36).slice(2)}`
+      setUploadingFiles(prev => [...prev, { id: tempId, name: file.name, size: file.size, progress: 0 }])
       try {
-        const result = await uploadFileToCloud(file)
-        if (result) added.push(result)
+        const result = await uploadFileWithProgressToCloud(file, (percent) => {
+          setUploadingFiles(prev => prev.map(f => f.id === tempId ? { ...f, progress: percent } : f))
+        })
+        setUploadingFiles(prev => prev.filter(f => f.id !== tempId))
+        if (result) {
+          seenNames.add(result.name)
+          setFiles(prev => [...prev, result])
+          logAction('dropped_file', `加入檔案「${result.name}」`)
+          setActiveFileId(result.id)
+          setActiveNoteId(null)
+        }
       } catch (err) {
         console.error('Save file failed', file.name, err)
+        setUploadingFiles(prev => prev.filter(f => f.id !== tempId))
       }
     }
-    if (added.length) {
-      setFiles(prev => [...prev, ...added])
-      added.forEach(f => logAction('dropped_file', `加入檔案「${f.name}」`))
-      // Auto-display the last uploaded file
-      const lastAdded = added[added.length - 1]
-      setActiveFileId(lastAdded.id)
-      setActiveNoteId(null)
-    }
-  }, [logAction])
+  }, [logAction, files])
 
   const renameFile = useCallback(async (id: string, newName: string) => {
     const trimmed = newName.trim()
     if (!trimmed) return
+    if (files.some((f) => f.id !== id && f.name === trimmed)) {
+      setUserMessage(`無法改名為已存在嘅檔案名：${trimmed}`)
+      setTimeout(() => setUserMessage(null), 3000)
+      return
+    }
     const file = files.find(f => f.id === id) as CloudFile | undefined
     const driveFileId = file?.driveFileId
     try {
@@ -482,12 +564,13 @@ function App() {
     pushHistory()
     const file = files.find(f => f.id === id) as CloudFile | undefined
     if (file?.url?.startsWith('blob:')) URL.revokeObjectURL(file.url)
+    setFiles(prev => prev.filter(f => f.id !== id))
+    setActiveFileId(prev => (prev === id ? null : prev))
+    setLastUsedPdfFile(prev => (prev?.id === id ? null : prev))
+    logAction('section_edited', '已刪除檔案')
     deleteFileFromCloud(id, file?.driveFileId)
-      .then(() => {
-        setFiles(prev => prev.filter(f => f.id !== id))
-        setActiveFileId(prev => (prev === id ? null : prev))
-        setLastUsedPdfFile(prev => (prev?.id === id ? null : prev))
-        logAction('section_edited', '已刪除檔案')
+      .then((ok) => {
+        if (!ok) console.warn('Drive delete failed for', id)
       })
       .catch((err) => console.error('Delete file failed', err))
   }, [files, pushHistory])
@@ -553,24 +636,20 @@ function App() {
     if (note) logAction('opened_note', `打開筆記「${note.name}」`)
   }, [notes, logAction])
 
-  const selectFile = useCallback(async (id: string) => {
+  const selectFile = useCallback((id: string) => {
     const file = files.find(f => f.id === id) as CloudFile | undefined
-    if (file?.driveFileId && (!file.url || file.url === '')) {
-      try {
-        const blob = await filesApi.download(id)
-        if (blob) {
-          const url = URL.createObjectURL(blob)
-          setFiles(prev => prev.map(f => (f.id === id ? { ...f, url } : f)))
-        }
-      } catch (err) {
-        console.error('Fetch file for view failed', err)
-      }
-    }
     setActiveFileId(id)
     setActiveNoteId(null)
     if (file) {
       logAction('opened_file', `打開檔案「${file.name}」`)
       if (file.name?.toLowerCase().endsWith('.pdf')) setLastUsedPdfFile(file)
+      if (file.driveFileId && (!file.url || file.url === '')) {
+        fetchFileAndCache(id, file.name, file.type, file.size, file.addedAt).then((url) => {
+          if (url) {
+            setFiles(prev => prev.map(f => (f.id === id ? { ...f, url } : f)))
+          }
+        }).catch((err) => console.error('Fetch file for view failed', err))
+      }
     }
   }, [files, logAction])
 
@@ -585,7 +664,11 @@ function App() {
       const loaded = loadNotesSync()
       if (loaded != null && loaded.length > 0) {
         setNotes(loaded)
-        setActiveNoteId(prev => (loaded.some(n => n.id === prev) ? prev : loaded[0].id))
+        setActiveNoteId(prev => {
+          if (loaded.some(n => n.id === prev)) return prev
+          const latest = loaded.reduce((a, b) => (a.createdAt >= b.createdAt ? a : b))
+          return latest.id
+        })
       }
     }
     syncNotesFromStorage()
@@ -606,7 +689,8 @@ function App() {
     }
     const currentExists = notes.some(n => n.id === activeNoteId)
     if (!currentExists && activeNoteId != null) {
-      setActiveNoteId(notes[0].id)
+      const latest = notes.reduce((a, b) => (a.createdAt >= b.createdAt ? a : b))
+      setActiveNoteId(latest.id)
     }
   }, [notes.length, notes, activeNoteId])
 
@@ -659,7 +743,7 @@ function App() {
   }, [])
 
   const showCanvas = !activeFileId
-  const displayNote = showCanvas ? (activeNote ?? notes[0]) : notes[0]
+  const displayNote = showCanvas ? (activeNote ?? latestNote) : latestNote
 
   const canvasFileType: CanvasFileType = !activeFileId
     ? 'note'
@@ -676,7 +760,8 @@ function App() {
   const usePdfTexts = isPdf && pdfFile && pdfFile.id === pdfFileIdForTexts && Object.keys(pdfPageTexts).length > 0
   const usePdfChapters = isPdf && pdfFile && pdfFile.id === pdfChaptersFileId && pdfChapters.length > 0
   const currentPdfPage = activeFile?.name?.toLowerCase().endsWith('.pdf') ? (viewingPdfPageNumber ?? 1) : undefined
-  const geminiApiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined
+  // Prefer user-stored API key; fall back to env var
+  const geminiApiKey = storedApiKeys.google?.trim() || (import.meta.env.VITE_GEMINI_API_KEY as string | undefined)
   const agentContext: AgentContext = {
     note: displayNote,
     notes,
@@ -707,6 +792,32 @@ function App() {
       : null
   const currentCanvasOverlays: CanvasOverlayMemo[] =
     (overlayKey && canvasOverlaysByKey[overlayKey]) ? canvasOverlaysByKey[overlayKey] : []
+
+  const verifyStorage = useCallback(async () => {
+    const fileMetadata = files.map(f => ({
+      id: f.id,
+      name: f.name,
+      type: f.type,
+      size: f.size,
+      addedAt: f.addedAt,
+      driveFileId: (f as CloudFile).driveFileId
+    }))
+    const r = await storageApi.verify({
+      notes,
+      timeline,
+      chatThreads,
+      canvasOverlays: canvasOverlaysByKey,
+      fileMetadata
+    })
+    if (!r) return null
+    return {
+      match: r.match,
+      driveReachable: r.driveReachable,
+      details: r.details,
+      driveCounts: r.driveCounts,
+      clientCounts: r.clientCounts
+    }
+  }, [notes, timeline, chatThreads, canvasOverlaysByKey, files])
 
   const handleToolAction = useCallback((action: ToolResultAction) => {
     // Helper to navigate to a note and focus a section
@@ -768,6 +879,11 @@ function App() {
 
   return (
     <div className={`ide-layout ${fullscreenLock ? 'fullscreen-lock' : ''}`}>
+      {userMessage && (
+        <div className="ide-user-message" role="alert">
+          {userMessage}
+        </div>
+      )}
       <Header
         onToggleLock={() => setFullscreenLock(v => !v)}
         onOpenCommand={() => setCommandOpen(true)}
@@ -777,11 +893,14 @@ function App() {
         onRedo={handleRedo}
         canUndo={canUndo}
         canRedo={canRedo}
+        onVerifyStorage={verifyStorage}
+        onApiKeysChange={setStoredApiKeys}
       />
       <div className="ide-main">
         <Sidebar
           notes={notes}
           files={files}
+          uploadingFiles={uploadingFiles}
           activeNoteId={activeNoteId}
           activeFileId={activeFileId}
           timeline={timeline}
@@ -844,6 +963,8 @@ function App() {
         </div>
         <ChatPanel
           agentContext={agentContext}
+          storedApiKeys={storedApiKeys}
+          geminiApiKeyEnv={import.meta.env.VITE_GEMINI_API_KEY as string | undefined}
           messages={chatMessages}
           onMessagesChange={(updater) => {
             setChatThreads(prev =>
