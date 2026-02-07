@@ -14,6 +14,7 @@ import { StatusBar } from './components/StatusBar'
 import { CommandPalette } from './components/CommandPalette'
 import { GrindingTimer } from './components/GrindingTimer'
 import { ConfirmDialog } from './components/ConfirmDialog'
+import { TutorialOverlay } from './components/TutorialOverlay'
 import {
   loadNotes as loadNotesSync,
   loadTimeline as loadTimelineSync,
@@ -127,6 +128,7 @@ function App() {
     codeWindowId?: string
   }>({ open: false, type: null })
   const [fullscreenLock, setFullscreenLock] = useState(false)
+  const [showTutorial, setShowTutorial] = useState(true)
   const [commandOpen, setCommandOpen] = useState(false)
   const [timerOpen, setTimerOpen] = useState(false)
   const [timerPhase, setTimerPhase] = useState<TimerPhase>('idle')
@@ -1058,6 +1060,7 @@ function App() {
           onCancel={handleConfirmDialogCancel}
         />
       )}
+      {showTutorial && <TutorialOverlay onClose={() => setShowTutorial(false)} />}
     </div>
   )
 }
